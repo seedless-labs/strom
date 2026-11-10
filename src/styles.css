@@ -1,0 +1,24 @@
+/* canvas v8 tokens. radius 0, borders, no shadows */
+:root {
+  --bg: #F7F6F2; --panel: #EEECE6; --fg: #0B0C0E; --body: #3E4044; --muted: #5C5E62; --idle: #76787C;
+  --line: rgba(11,12,14,.12); --line2: rgba(11,12,14,.28); --accent: color-mix(in srgb, #00AEFF 74%, #000);
+  --sans: 'Geist', ui-sans-serif, system-ui, sans-serif; --mono: 'Geist Mono', ui-monospace, monospace;
+}
+:root[data-theme="dark"] {
+  --bg: #07080A; --panel: #0E1013; --fg: #F2F1EC; --body: #B9BBBD; --muted: #9A9C9F; --idle: #6E7073;
+  --line: rgba(242,241,236,.12); --line2: rgba(242,241,236,.28); --accent: #00AEFF;
+}
+* { box-sizing: border-box; margin: 0; border-radius: 0; }
+body { background: var(--bg); color: var(--body); font: 15px/1.5 var(--sans); }
+main { max-width: 480px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 12px; }
+h1 { color: var(--fg); font-size: 20px; font-weight: 600; }
+.card { background: var(--panel); border: 1px solid var(--line); padding: 14px; display: grid; gap: 6px; }
+.label { color: var(--muted); font: 12px var(--mono); }
+.big { color: var(--fg); font: 600 28px var(--mono); }
+.row { display: flex; justify-content: space-between; font: 13px var(--mono); color: var(--body); }
+input, select { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--line2); padding: 10px; font: 15px var(--mono); }
+button { background: var(--accent); color: #fff; border: 0; padding: 14px; font: 600 15px var(--sans); cursor: pointer; }
+button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line2); }
+button:disabled { opacity: .4; cursor: default; }
+.err { color: #E5484D; font: 13px var(--mono); }
+.top { display: flex; justify-content: space-between; align-items: center; }
