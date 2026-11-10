@@ -10,6 +10,7 @@ import { MINTS, CU_LIMIT, SLIPPAGE_BPS, type Cfg } from './config';
 import { quote, swapInstructions, routeLabel, type Quote } from './jupiter';
 import { initTransferIx, ata, transferFee } from './omni';
 import { payerSigner, estimateFee, feeTransferIx } from './kora';
+import { nearAccountOf } from './near';
 
 export const V1_MAX_ACCOUNTS = 64;
 export const V1_MAX_BYTES = 4096;
@@ -26,6 +27,9 @@ export type SwapPlan = {
   accounts: number; bytes: number;
   wire: string;             // base64, unsigned by the user. hand to the wallet, then kora signAndSend
 };
+
+// intents.near credits whoever the message names: the user's near implicit account (seen on every real transfer, 10 Nov)
+export const omniMessage = (r: { user: string; recipient: string }) => r.recipient === 'near:intents.near' ? nearAccountOf(r.user) : '';
 
 export type SwapReq = { user: string; inputMint: string; amount: bigint; recipient: string; feeMint?: string; slippageBps?: number };
 
@@ -49,16 +53,17 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
   const feeMint = r.feeMint ?? MINTS.usdc;
   const q = await quote(r.inputMint, MINTS.near, r.amount, r.slippageBps ?? SLIPPAGE_BPS);
   const bridged = BigInt(q.otherAmountThreshold);
-  const [{ ixs: jup, alts }, signer, { value: bh }, omniFee] = await Promise.all([
-    swapInstructions(q, r.user),
-    payerSigner(cfg.kora),
+  const signer = await payerSigner(cfg.kora);
+  const [{ ixs: jup, alts }, { value: bh }, omniFee] = await Promise.all([
+    swapInstructions(q, r.user, signer),
     rpc.getLatestBlockhash().send(),
     transferFee(r.user, r.recipient, MINTS.near),
   ]);
   // relayer fee paid in the bridged token (taken from the amount), native fee 0 so the user needs no sol.
   // ⚠ token-fee-only relaying is unverified until the funded run
   const relayFee = BigInt(omniFee.transferred_token_fee ?? 0);
-  const omni = await initTransferIx({ user: r.user, mint: MINTS.near, amount: bridged, recipient: r.recipient, fee: relayFee });
+  const omni = await initTransferIx({ user: r.user, mint: MINTS.near, amount: bridged, recipient: r.recipient, fee: relayFee,
+    payer: signer, message: omniMessage(r) });
   const [userFee, koraFeeAta] = await Promise.all([ata(r.user, feeMint), ata(signer, feeMint)]);
   const ixsFor = (fee: bigint): Instruction[] => [feeTransferIx(userFee, koraFeeAta, r.user, fee), ...jup, omni];
 
