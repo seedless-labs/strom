@@ -9,7 +9,7 @@ import { createSolanaRpc, createKeyPairFromBytes, getAddressFromPublicKey, parti
 import { toIx, type JupIx } from '../src/lib/jupiter';
 import { initTransferIx, ata } from '../src/lib/omni';
 import { payerSigner, estimateFee, signAndSend, feeTransferIx } from '../src/lib/kora';
-import { composeV1, V1_MAX_ACCOUNTS, V1_MAX_BYTES } from '../src/lib/buildSwap';
+import { composeV1, omniMessage, V1_MAX_ACCOUNTS, V1_MAX_BYTES } from '../src/lib/buildSwap';
 import { MINTS } from '../src/lib/config';
 
 const SPIKE = `${homedir()}/near-swap-spike/p3/`;
@@ -39,9 +39,11 @@ console.log(`1/3 omni ix = captured p3c ix (${omni.accounts!.length} accts, reci
 // 2. compose v1 with kora as fee payer, fee in usdc
 const rpc = createSolanaRpc(RPC);
 const signer = await payerSigner(KORA);
+// the tx we ship: kora pays the wormhole message rent and the message credits the user's near account on intents
+const omniLive = await initTransferIx({ user, payer: signer, mint: MINTS.near, amount: BigInt(minOut), recipient, fee: feeT, nativeFee: 0n, message: omniMessage({ user, recipient }) });
 const { value: bh } = await rpc.getLatestBlockhash().send();
 const [uUsdc, kUsdc] = await Promise.all([ata(user, MINTS.usdc), ata(signer, MINTS.usdc)]);
-const all = (fee: bigint) => [feeTransferIx(uUsdc, kUsdc, user, fee), jupAta, jupSwap, omni];
+const all = (fee: bigint) => [feeTransferIx(uUsdc, kUsdc, user, fee), jupAta, jupSwap, omniLive];
 const fee = (await estimateFee(KORA, getBase64EncodedWireTransaction(composeV1(signer, bh, all(1n))), MINTS.usdc)) || 10_000n;
 const tx = composeV1(signer, bh, all(fee));
 const accts = new Set(all(fee).flatMap(i => [i.programAddress, ...i.accounts!.map(a => a.address)]).concat(signer as any)).size;
@@ -52,13 +54,17 @@ if (accts > V1_MAX_ACCOUNTS || bytes > V1_MAX_BYTES) fail(`caps: ${accts} accoun
 console.log(`2/3 v1 tx: ${accts} accounts, ${bytes} bytes, kora fee ${fee} usdc base units, 1 user signature`);
 
 // 3. kora signs as fee payer and sends; confirm on the fork
+const lamports = async () => (await rpc.getBalance(user).send()).value;
+const before = await lamports();
 const sig = await signAndSend(KORA, wire);
 for (let i = 0; i < 30; i++) {
   const { value: [s] } = await rpc.getSignatureStatuses([sigOf(sig)]).send();
   if (s?.err) fail(`tx ${sig} failed: ${JSON.stringify(s.err)}`);
   if (s?.confirmationStatus === 'confirmed' || s?.confirmationStatus === 'finalized') {
     const t: any = await rpc.getTransaction(sigOf(sig), { maxSupportedTransactionVersion: 1 as any, encoding: 'json' }).send();
-    console.log(`3/3 confirmed ${sig} · ${t?.meta?.computeUnitsConsumed ?? '?'} cu\nfork check PASS`);
+    const spent = before - (await lamports());
+    if (spent !== 0n) fail(`user spent ${spent} lamports, should be 0 (no sol needed)`);
+    console.log(`3/3 confirmed ${sig} · ${t?.meta?.computeUnitsConsumed ?? '?'} cu · user sol spent 0\nfork check PASS`);
     process.exit(0);
   }
   await new Promise(r => setTimeout(r, 1000));

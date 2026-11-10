@@ -25,10 +25,11 @@ export async function quote(inputMint: string, outputMint: string, amount: bigin
 }
 
 // compute-budget ixs are dropped: tx v1 carries the cu limit in its config
-export async function swapInstructions(q: Quote, user: string): Promise<{ ixs: Instruction[]; alts: string[] }> {
+export async function swapInstructions(q: Quote, user: string, payer?: string): Promise<{ ixs: Instruction[]; alts: string[] }> {
   const si = await (await fetch(`${API.jupiter}/swap-instructions`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ quoteResponse: q, userPublicKey: user, wrapAndUnwrapSol: true }),
+    // payer: kora funds any token-account rent so the user needs no sol
+    body: JSON.stringify({ quoteResponse: q, userPublicKey: user, wrapAndUnwrapSol: true, ...(payer && { payer }) }),
   })).json();
   if (si.error) throw new Error('jupiter swap-instructions: ' + si.error);
   // v1 inlines every account (buildSwap enforces the 64 cap); alts are kept for the v0 fallback

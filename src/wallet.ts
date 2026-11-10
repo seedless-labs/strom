@@ -2,7 +2,7 @@
 import { getWallets } from '@wallet-standard/app';
 import type { Wallet, WalletAccount } from '@wallet-standard/base';
 import { StandardConnect, type StandardConnectFeature } from '@wallet-standard/features';
-import { SolanaSignTransaction, type SolanaSignTransactionFeature } from '@solana/wallet-standard-features';
+import { SolanaSignTransaction, type SolanaSignTransactionFeature, SolanaSignMessage, type SolanaSignMessageFeature } from '@solana/wallet-standard-features';
 
 const CHAIN = 'solana:mainnet';
 
@@ -30,4 +30,12 @@ export async function signWire(w: Wallet, account: WalletAccount, wireB64: strin
   const f = w.features[SolanaSignTransaction] as SolanaSignTransactionFeature[typeof SolanaSignTransaction];
   const [out] = await f.signTransaction({ account, chain: CHAIN, transaction: fromB64(wireB64) });
   return toB64(out.signedTransaction);
+}
+
+// near -> sol: the same key signs the near intent bytes. returns the raw 64-byte ed25519 signature
+export async function signMsg(w: Wallet, account: WalletAccount, message: Uint8Array): Promise<Uint8Array> {
+  const f = w.features[SolanaSignMessage] as SolanaSignMessageFeature[typeof SolanaSignMessage] | undefined;
+  if (!f) throw new Error('this wallet does not support message signing');
+  const [out] = await f.signMessage({ account, message });
+  return out.signature;
 }

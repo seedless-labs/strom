@@ -6,7 +6,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "check:omni": "tsx scripts/omni-golden.ts",
-    "check:fork": "tsx scripts/fork-check.ts"
+    "check:fork": "tsx scripts/fork-check.ts",
+    "check:near": "tsx scripts/near-check.ts"
   },
   "repository": {
     "type": "git",
