@@ -72,7 +72,9 @@ export async function transferFee(sender: string, recipient: string, mint: strin
 
 // bridge status for a solana init signature. used by the tracker and the agent ("where is my money")
 export async function transferStatus(solSignature: string) {
-  const r = await (await fetch(`${API.omni}/transfers/transfer?transaction_hash=${solSignature}`)).json();
+  // the api answers plain-text "Not found" (404) until it indexes the tx
+  const res = await fetch(`${API.omni}/transfers/transfer?transaction_hash=${solSignature}`);
+  const r = res.ok ? await res.json().catch(() => null) : null;
   const t = Array.isArray(r) ? r[0] : null;
   if (!t) return { found: false as const };
   return {
