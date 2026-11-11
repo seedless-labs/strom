@@ -17,8 +17,8 @@ export const toIx = (i: JupIx): Instruction => ({
   data: b64(i.data),
 });
 
-export async function quote(inputMint: string, outputMint: string, amount: bigint, slippageBps = SLIPPAGE_BPS): Promise<Quote> {
-  const u = `${API.jupiter}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&maxAccounts=${JUP_MAX_ACCOUNTS}`;
+export async function quote(inputMint: string, outputMint: string, amount: bigint, slippageBps = SLIPPAGE_BPS, maxAccounts = JUP_MAX_ACCOUNTS): Promise<Quote> {
+  const u = `${API.jupiter}/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&maxAccounts=${maxAccounts}`;
   const q = await (await fetch(u)).json();
   if (q.error || !q.outAmount) throw new Error('jupiter quote: ' + (q.error ?? 'no route'));
   return q;
