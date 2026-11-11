@@ -32,8 +32,8 @@ async function jup(path: string, init?: RequestInit): Promise<any> {
   }
 }
 
-export async function quote(inputMint: string, outputMint: string, amount: bigint, slippageBps = SLIPPAGE_BPS, maxAccounts = JUP_MAX_ACCOUNTS): Promise<Quote> {
-  const q = await jup(`/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&maxAccounts=${maxAccounts}`);
+export async function quote(inputMint: string, outputMint: string, amount: bigint, slippageBps = SLIPPAGE_BPS, maxAccounts = JUP_MAX_ACCOUNTS, direct = false): Promise<Quote> {
+  const q = await jup(`/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amount}&slippageBps=${slippageBps}&maxAccounts=${maxAccounts}${direct ? '&onlyDirectRoutes=true' : ''}`);
   if (q.error || !q.outAmount) throw new Error('jupiter quote: ' + (q.error ?? 'no route'));
   return q;
 }
