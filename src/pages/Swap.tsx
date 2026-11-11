@@ -1,144 +1,138 @@
-// test surface: sol -> near (one signature, kora pays gas) and near -> sol (one signed message, relay pays near gas).
-// the full swap/track screens from canvas v8 land in chunk 3.
+// swap board from canvas v8. one card, one primary action, the wire moves only while money moves.
 import { useEffect, useState } from 'react';
 import type { Wallet, WalletAccount } from '@wallet-standard/base';
-import { MINTS, DECIMALS, defaultCfg } from '../lib/config';
-import { buildSwap, type SwapPlan } from '../lib/buildSwap';
-import { signAndSend } from '../lib/kora';
-import { transferStatus } from '../lib/omni';
-import { solanaWallets, onWalletsChange, connect, signWire, signMsg } from '../wallet';
-import { nearAccountOf, intentsBalances, quoteNearToSol, transferPayload, signedIntent, simulate, publish, swapStatus, TOKENS, NEAR_DECIMALS, type Quote } from '../lib/near';
+import { solanaWallets, onWalletsChange, connect } from '../wallet';
+import {
+  quoteToNear, sendToNear, nearBalance, quoteToSol, sendToSol, nearAccountOf,
+  fmt, short, DECIMALS, NEAR_DECIMALS, type Tok, type SwapPlan, type Quote,
+} from '../lib/flow';
 
-type Tok = 'usdc' | 'sol';
-const toBase = (v: string, d: number) => { const [i, f = ''] = v.trim().split('.'); return BigInt(i || '0') * 10n ** BigInt(d) + BigInt((f + '0'.repeat(d)).slice(0, d) || '0'); };
-const fmt = (v: bigint, d: number, p = 4) => (Number(v) / 10 ** d).toFixed(p);
-const short = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`;
+type Dir = 'to-near' | 'to-sol';
+export const LAST = 'strom-last'; // last transfer, read by the track page
+
+function Wire({ live, dir }: { live: boolean; dir: Dir }) {
+  const stops = dir === 'to-near' ? ['solana', 'jupiter', 'omni', 'near'] : ['near', 'intents', '1click', 'solana'];
+  return (
+    <div>
+      <svg className={'wire' + (live ? ' live' : '')} width="100%" height="10" viewBox="0 0 400 10" preserveAspectRatio="none" aria-hidden="true">
+        <line x1="0" y1="5" x2="400" y2="5" stroke="var(--line2)" strokeWidth="1" />
+        <line x1="0" y1="5" x2="400" y2="5" stroke="var(--acc)" strokeWidth="2" />
+      </svg>
+      <div className="wire-stops">{stops.map(s => <span key={s}>{s}</span>)}</div>
+    </div>
+  );
+}
 
 export default function Swap() {
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => { try { return (localStorage.getItem('theme') as any) || 'dark'; } catch { return 'dark'; } });
   const [wallets, setWallets] = useState<Wallet[]>(solanaWallets);
   const [w, setW] = useState<Wallet>(); const [acct, setAcct] = useState<WalletAccount>();
-  const [tok, setTok] = useState<Tok>('usdc'); const [amt, setAmt] = useState('10');
-  const [plan, setPlan] = useState<SwapPlan>(); const [sig, setSig] = useState<string>();
-  const [status, setStatus] = useState<string>(); const [busy, setBusy] = useState(''); const [err, setErr] = useState('');
-  const [dir, setDir] = useState<'to-near' | 'to-sol'>('to-near');
-  const [nearBal, setNearBal] = useState<bigint>(); const [nAmt, setNAmt] = useState('1');
-  const [nq, setNq] = useState<Quote>(); const [nStatus, setNStatus] = useState<string>();
+  const [dir, setDir] = useState<Dir>('to-near');
+  const [tok, setTok] = useState<Tok>('usdc');
+  const [amt, setAmt] = useState('1');
+  const [plan, setPlan] = useState<SwapPlan>(); const [q, setQ] = useState<Quote>();
+  const [nearBal, setNearBal] = useState<bigint>();
+  const [busy, setBusy] = useState(''); const [err, setErr] = useState('');
 
-  useEffect(() => { document.documentElement.dataset.theme = theme; try { localStorage.setItem('theme', theme); } catch {} }, [theme]);
   useEffect(() => onWalletsChange(() => setWallets(solanaWallets())), []);
+  // any change to what is being sent throws away the old quote
+  useEffect(() => { setPlan(undefined); setQ(undefined); setErr(''); }, [dir, tok, amt, acct]);
+  useEffect(() => {
+    if (!acct || dir !== 'to-sol') return;
+    nearBalance(acct.address).then(setNearBal).catch(() => setNearBal(undefined));
+  }, [acct, dir]);
 
   const run = (label: string, f: () => Promise<void>) => async () => {
     setErr(''); setBusy(label);
     try { await f(); } catch (e: any) { setErr(String(e?.message ?? e).toLowerCase()); } finally { setBusy(''); }
   };
   const pick = (x: Wallet) => run('connecting', async () => { setAcct(await connect(x)); setW(x); })();
-  const review = run('building', async () => {
-    setPlan(undefined); setSig(undefined); setStatus(undefined);
-    setPlan(await buildSwap(defaultCfg, { user: acct!.address, inputMint: MINTS[tok], amount: toBase(amt, DECIMALS[tok]), recipient: `near:${defaultCfg.nearRecipient}` }));
+  const review = run('getting a quote', async () => {
+    if (dir === 'to-near') setPlan(await quoteToNear(acct!.address, tok, amt));
+    else setQ(await quoteToSol(acct!.address, amt));
   });
   const sign = run('waiting for your wallet', async () => {
-    const signed = await signWire(w!, acct!, plan!.wire);
-    setBusy('sending'); setSig(await signAndSend(defaultCfg.kora, signed));
+    const save = (v: object) => { try { localStorage.setItem(LAST, JSON.stringify({ ...v, at: Date.now() })); } catch { /* track page also takes it from the link */ } };
+    if (dir === 'to-near') {
+      const sig = await sendToNear(w!, acct!, plan!, setBusy);
+      save({ dir, sig }); location.hash = '#/track?sig=' + sig;
+    } else {
+      const deposit = await sendToSol(w!, acct!, q!, setBusy);
+      save({ dir, deposit }); location.hash = '#/track?deposit=' + deposit;
+    }
   });
-  const nearAcct = acct ? nearAccountOf(acct.address) : '';
-  const loadNear = run('reading your near balance', async () => { setNearBal((await intentsBalances(nearAcct))[TOKENS.near]); });
-  useEffect(() => { if (acct && dir === 'to-sol') loadNear(); }, [acct, dir]);
-  const reviewNear = run('getting a quote', async () => {
-    setNq(undefined); setNStatus(undefined);
-    setNq(await quoteNearToSol({ solAddress: acct!.address, amount: toBase(nAmt, NEAR_DECIMALS) }));
-  });
-  const signNear = run('waiting for your wallet', async () => {
-    const payload = transferPayload({ nearAccount: nearAcct, to: nq!.depositAddress!, token: TOKENS.near, amount: BigInt(nq!.amountIn) });
-    const s = signedIntent(payload, await signMsg(w!, acct!, new TextEncoder().encode(payload)), acct!.address);
-    setBusy('checking on near'); await simulate(s);
-    setBusy('sending'); await publish(s); setNStatus('sent, swapping to sol');
-  });
-  const checkNear = run('checking', async () => { const s = await swapStatus(nq!.depositAddress!); setNStatus(s.words); });
-  const check = run('checking', async () => {
-    const s = await transferStatus(sig!);
-    setStatus(!s.found ? 'not seen by the bridge yet' : s.finalised ? 'in your near account' : s.onNear ? 'on near, finishing' : s.signed ? 'bridging to near' : 'swapped, waiting for the bridge');
-  });
+
+  const sendTok = dir === 'to-near' ? tok : 'near';
+  const get = dir === 'to-near'
+    ? (plan ? fmt(plan.bridged - plan.relayFee, DECIMALS.near) : '')
+    : (q ? fmt(q.amountOut, DECIMALS.sol) : '');
+  const ready = dir === 'to-near' ? !!plan : !!q;
+  const amtOk = Number(amt) > 0;
+
+  const primary = !acct ? null
+    : !ready ? <button className="btn" disabled={!!busy || !amtOk} onClick={review}>{busy || 'review swap'}</button>
+    : <button className="btn" disabled={!!busy} onClick={sign}>{busy || 'sign in your wallet'}</button>;
 
   return (
-    <main>
-      <div className="top">
-        <h1>strom <span className="label">by seedless</span></h1>
-        <button className="ghost" aria-label="toggle theme" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? '☀' : '☾'}</button>
+    <section className="app">
+      <div className="box-head" style={{ alignItems: 'center' }}>
+        <span className="h2">swap</span>
+        {acct && <span className="token" title={acct.address}>{short(acct.address)}</span>}
       </div>
 
-      {!acct ? (
-        <div className="card">
-          <span className="label">connect your wallet</span>
-          {wallets.length ? wallets.map(x => <button key={x.name} className="ghost" onClick={() => pick(x)}>{x.name.toLowerCase()}</button>)
-            : <span>no solana wallet found in this browser</span>}
+      <div className="box">
+        <div className="box-row">
+          <div className="box-head">
+            <span className="label">you send · {dir === 'to-near' ? 'solana' : 'near'}</span>
+            {dir === 'to-sol' && nearBal !== undefined && (
+              <button className="label" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => setAmt(fmt(nearBal, NEAR_DECIMALS, 6))}>
+                balance {fmt(nearBal, NEAR_DECIMALS)}
+              </button>
+            )}
+          </div>
+          <div className="amount">
+            <input inputMode="decimal" aria-label="amount to send" value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))} />
+            {dir === 'to-near'
+              ? <button className="token" onClick={() => setTok(tok === 'usdc' ? 'sol' : 'usdc')} aria-label="change token">{tok} ⇄</button>
+              : <span className="token">near</span>}
+          </div>
         </div>
-      ) : (
-        <>
-          <div className="row"><span>{w!.name.toLowerCase()}</span><span>{short(acct.address)}</span></div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className={dir === 'to-near' ? '' : 'ghost'} style={{ flex: 1 }} onClick={() => setDir('to-near')}>sol → near</button>
-            <button className={dir === 'to-sol' ? '' : 'ghost'} style={{ flex: 1 }} onClick={() => setDir('to-sol')}>near → sol</button>
+        <div className="flip">
+          <button className="icon-btn" aria-label="flip direction" onClick={() => setDir(dir === 'to-near' ? 'to-sol' : 'to-near')}>⇅</button>
+        </div>
+        <div className="box-row">
+          <span className="label">you get · {dir === 'to-near' ? 'near' : 'solana'}</span>
+          <div className="amount">
+            <output aria-live="polite">{get || '—'}</output>
+            <span className="token">{dir === 'to-near' ? 'near' : 'sol'}</span>
           </div>
-          {dir === 'to-sol' ? (<>
-          <div className="card">
-            <span className="label">you send · near (your near intents balance)</span>
-            <div className="row"><span>balance</span><span>{nearBal === undefined ? '…' : fmt(nearBal, NEAR_DECIMALS)} near</span></div>
-            <input inputMode="decimal" value={nAmt} onChange={e => setNAmt(e.target.value)} />
-          </div>
-          <button className="ghost" disabled={!!busy} onClick={reviewNear}>review swap</button>
-          {nq && (
-            <div className="card">
-              <span className="label">you get · solana</span>
-              <span className="big">{fmt(BigInt(nq.amountOut), 9)} sol</span>
-              <div className="row"><span>at least</span><span>{fmt(BigInt(nq.minAmountOut), 9)} sol</span></div>
-              <div className="row"><span>to</span><span>{short(acct.address)}</span></div>
-              <div className="row"><span>time</span><span>~{nq.timeEstimate ?? '?'}s</span></div>
-              <div className="row"><span>gas</span><span>none, the relay pays near gas</span></div>
-              <div className="row"><span>signatures</span><span>1 message</span></div>
-            </div>
-          )}
-          {nq && !nStatus && <button disabled={!!busy} onClick={signNear}>sign in your wallet</button>}
-          {nStatus && (
-            <div className="card">
-              <span>{nStatus}</span>
-              <button className="ghost" disabled={!!busy} onClick={checkNear}>where is my money</button>
-            </div>
-          )}
-          </>) : (<>
-          <div className="card">
-            <span className="label">you send · solana</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input inputMode="decimal" value={amt} onChange={e => setAmt(e.target.value)} />
-              <select value={tok} onChange={e => setTok(e.target.value as Tok)} style={{ width: 100 }}><option>usdc</option><option>sol</option></select>
-            </div>
-          </div>
-          <button className="ghost" disabled={!!busy} onClick={review}>review swap</button>
-          {plan && (
-            <div className="card">
-              <span className="label">you get · near</span>
-              <span className="big">{fmt(plan.bridged, DECIMALS.near)} near</span>
-              <div className="row"><span>to</span><span>your near account {nearAccountOf(acct.address).slice(0, 8)}…</span></div>
-              <div className="row"><span>route</span><span>{plan.route.toLowerCase()}</span></div>
-              <div className="row"><span>gas</span><span>{fmt(plan.koraFee, DECIMALS.usdc)} usdc · no sol needed</span></div>
-              <div className="row"><span>signatures</span><span>1</span></div>
-              <div className="row"><span>tx</span><span>v{plan.version} · {plan.accounts} accounts · {plan.bytes} bytes</span></div>
-            </div>
-          )}
-          {plan && !sig && <button disabled={!!busy} onClick={sign}>sign in your wallet</button>}
-          {sig && (
-            <div className="card">
-              <span className="label">sent</span>
-              <a className="row" href={`https://solscan.io/tx/${sig}`} target="_blank" rel="noreferrer">{short(sig)} ↗</a>
-              {status && <span>{status}</span>}
-              <button className="ghost" disabled={!!busy} onClick={check}>where is my money</button>
-            </div>
-          )}
-          </>)}
-        </>
-      )}
-      {busy && <span className="label">{busy}…</span>}
-      {err && <span className="err">{err}</span>}
-    </main>
+        </div>
+      </div>
+
+      <Wire live={!!busy && busy !== 'getting a quote'} dir={dir} />
+
+      <dl className="facts">
+        <dt>to</dt><dd>{acct ? `your intents account ${short(nearAccountOf(acct.address))}` : 'your intents account'}</dd>
+        {dir === 'to-near' ? <>
+          <dt>gas</dt><dd>{plan ? `${fmt(plan.koraFee, DECIMALS.usdc, 2)} usdc · no sol needed` : 'paid in usdc · no sol needed'}</dd>
+          <dt>bridge fee</dt><dd>{plan ? `${fmt(plan.relayFee, DECIMALS.near)} near` : 'taken from what you get'}</dd>
+          {plan && <><dt>route</dt><dd>{plan.route.toLowerCase()}</dd></>}
+        </> : <>
+          <dt>gas</dt><dd>none · you sign one message</dd>
+          {q?.timeEstimate && <><dt>time</dt><dd>about {q.timeEstimate}s</dd></>}
+        </>}
+        <dt>signatures</dt><dd>1</dd>
+      </dl>
+
+      {err && <p className="err" role="alert">{err}</p>}
+
+      {!acct ? (
+        <div style={{ display: 'grid', gap: 8 }}>
+          <span className="label">connect your wallet</span>
+          {wallets.length
+            ? wallets.map((x, i) => <button key={x.name} className={i ? "btn ghost" : "btn"} disabled={!!busy} onClick={() => pick(x)}>{busy || x.name.toLowerCase()}</button>)
+            : <p>no solana wallet found in this browser. open strom inside your wallet app, or add a wallet extension.</p>}
+        </div>
+      ) : primary}
+    </section>
   );
 }
