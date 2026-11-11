@@ -40,7 +40,7 @@ export const STROM_ALT: string | undefined = env.VITE_STROM_ALT ?? (globalThis a
 
 export const defaultCfg: Cfg = {
   rpc: env.VITE_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com',
-  kora: env.VITE_KORA_URL ?? 'http://localhost:8090',
+  kora: env.VITE_KORA_URL ?? '/api/kora',
   nearRecipient: env.VITE_NEAR_RECIPIENT ?? 'intents.near',
 };
 
