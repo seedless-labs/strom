@@ -39,7 +39,8 @@ export type Cfg = { rpc: string; kora: string; nearRecipient: string; txVersion?
 export const STROM_ALT: string | undefined = env.VITE_STROM_ALT ?? (globalThis as any).process?.env?.STROM_ALT ?? '6wshRpSHFpzY3aZ9eM9hJHKJPmqbYv9TYy6nUbZ21iZi';
 
 export const defaultCfg: Cfg = {
-  rpc: env.VITE_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com',
+  // in the browser, reads go through /api/rpc so the rpc key stays on the server; scripts use the public rpc or their own
+  rpc: env.VITE_SOLANA_RPC ?? ((globalThis as any).location?.origin ? `${(globalThis as any).location.origin}/api/rpc` : 'https://api.mainnet-beta.solana.com'),
   kora: env.VITE_KORA_URL ?? '/api/kora',
   nearRecipient: env.VITE_NEAR_RECIPIENT ?? 'intents.near',
 };
