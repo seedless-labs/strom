@@ -1,21 +1,25 @@
-// kora relayer proxy, the seedless pattern: the paymaster key lives here, never in the app.
-// the app calls /api/kora; this forwards to the hosted kora with the key, after checks.
-// kora pays real sol, so a request must look like strom's own transaction or it is refused:
+// strom's relayer: pays the solana fee for strom's own transactions, from a strom-only fee payer.
+// the payer key lives in server env (STROM_PAYER_KEY) and nowhere else. it holds a small balance on purpose:
+// that balance is the most anyone could ever take from it. no shared key, no hosted upstream.
+// a request must look like strom's own transaction or it is refused:
 // - only getPayerSigner, estimateTransactionFee and signAndSendTransaction
 // - the payer is the fee payer and nothing else: no top-level system or token instruction may touch it,
 //   except as the destination of a CloseAccount (the wsol rent coming back) or of a system Transfer (a sol fee)
 // - every top-level program is one strom uses, and the omni bridge is in it
 // - signAndSend must carry a fee to the payer, in usdc (to its usdc account) or in sol (a system transfer), that covers
 //   what the tx really costs the payer (simulated: network fee plus any rent it funds), never under 0.01 usdc worth
-// plus a per-ip limit, a body cap, a short upstream timeout and a daily ceiling per instance.
+// - every other signature must already be there; the payer signs last and the rpc verifies all of them before sending
+// plus a per-tx spend cap, a balance floor, a per-ip limit, a body cap and a daily ceiling per instance.
 import {
   address, getAddressEncoder, getProgramDerivedAddress, getBase64Encoder, getTransactionDecoder,
-  getCompiledTransactionMessageDecoder, type CompiledTransactionMessage,
+  getCompiledTransactionMessageDecoder, type CompiledTransactionMessage, createKeyPairFromBytes,
+  getAddressFromPublicKey, partiallySignTransaction, getBase64EncodedWireTransaction, getSignatureFromTransaction,
 } from '@solana/kit';
 
-const UPSTREAM = process.env.KORA_UPSTREAM ?? 'https://kora.lazorkit.com';
 const MAX_BODY = 64 * 1024;
-const TIMEOUT_MS = 20_000;
+const MAX_SPEND = 5_000_000n; // the most one tx may cost the payer before its fee comes back: 0.005 sol
+const FLOOR = 2_000_000n;     // the payer stops paying below 0.002 sol, so it never fails half way
+const DAILY_SPEND = Number(process.env.KORA_DAILY_LAMPORTS) > 0 ? BigInt(process.env.KORA_DAILY_LAMPORTS!) : 100_000_000n; // 0.1 sol per instance per day
 const PER_IP_PER_MIN = 20;
 const DAILY = Number(process.env.KORA_DAILY) > 0 ? Number(process.env.KORA_DAILY) : 2_000;
 
@@ -53,30 +57,25 @@ function allow(ip: string): boolean {
   return ++day.n <= DAILY;
 }
 
-async function upstream(method: string, params: object) {
-  const key = process.env.KORA_API_KEY!;
-  const r = await fetch(UPSTREAM, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', accept: 'application/json', 'x-api-key': key, authorization: `Bearer ${key}` },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  });
-  return { status: r.status, body: await r.json().catch(() => ({ error: { message: 'bad upstream reply' } })) };
-}
-
-let payerCache: { addr: string; usdcAta: string; t: number } | undefined;
+let payerCache: { kp: CryptoKeyPair; addr: string; usdcAta: string } | undefined;
 async function payer() {
-  if (payerCache && Date.now() - payerCache.t < 10 * 60_000) return payerCache;
-  const r = await upstream('getPayerSigner', {});
-  const addr: string | undefined = r.body?.result?.signer_address;
-  if (!addr) throw new Error('no payer');
+  if (payerCache) return payerCache;
+  const bytes = new Uint8Array(JSON.parse(process.env.STROM_PAYER_KEY!));
+  if (bytes.length !== 64) throw new Error('payer key must be 64 bytes');
+  const kp = await createKeyPairFromBytes(bytes);
+  const addr = await getAddressFromPublicKey(kp.publicKey);
   const enc = getAddressEncoder();
   const [usdcAta] = await getProgramDerivedAddress({
-    programAddress: address(ATA), seeds: [enc.encode(address(addr)), enc.encode(address(TOKEN)), enc.encode(address(USDC))],
+    programAddress: address(ATA), seeds: [enc.encode(addr), enc.encode(address(TOKEN)), enc.encode(address(USDC))],
   });
-  payerCache = { addr, usdcAta, t: Date.now() };
+  payerCache = { kp, addr, usdcAta };
   return payerCache;
 }
+
+const call = (method: string, params: unknown[]) => fetch(RPC, {
+  method: 'POST', headers: { 'content-type': 'application/json' },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(8000),
+}).then(r => r.json());
 
 // sol price for pricing the payer's spend. cached; a failed lookup uses a high fallback so the user is never undercharged
 let solUsd = { v: 0, t: 0 };
@@ -95,11 +94,7 @@ async function solPrice(): Promise<number> {
 // the usdc fee must cover it with a 20% margin, and never less than strom's floor.
 // solIn: lamports the tx itself pays the payer as its fee, added back so the fee is not netted against its own cost.
 // returns the fee in micro-usdc (fee) and the same floor/cost in lamports (lamports)
-async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n): Promise<{ why?: string; fee?: bigint; lamports?: bigint }> {
-  const call = (method: string, params: unknown[]) => fetch(RPC, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(8000),
-  }).then(r => r.json());
+async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n): Promise<{ why?: string; fee?: bigint; lamports?: bigint; spent?: bigint; bal?: bigint }> {
   const [bal, sim] = await Promise.all([
     call('getBalance', [payerAddr, { commitment: 'processed' }]),
     call('simulateTransaction', [wire, { encoding: 'base64', sigVerify: false, replaceRecentBlockhash: true, commitment: 'processed',
@@ -118,7 +113,7 @@ async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n)
   // the same in lamports: the usdc floor converted at a price rounded up (never undercharges), or the cost plus 20%
   const floor = (BASE_FEE * 1000n * 100n) / cents + 1n;
   const lamports = [floor, (spent * 12n) / 10n + 1n].reduce((a, b) => (b > a ? b : a));
-  return { fee, lamports };
+  return { fee, lamports, spent, bal: BigInt(bal.result.value) };
 }
 
 type Check = { why?: string; fee?: bigint; sol?: bigint };
@@ -155,8 +150,10 @@ function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
   return { fee, sol };
 }
 
+let spentToday = { d: '', n: 0n };
+
 export async function POST(req: Request): Promise<Response> {
-  if (!process.env.KORA_API_KEY) return json({ error: 'relayer is not configured' }, 503);
+  if (!process.env.STROM_PAYER_KEY) return json({ error: 'relayer is not configured' }, 503);
   const ip = req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
   if (!allow(ip)) return json({ error: 'busy, try again in a minute' }, 429);
 
@@ -168,27 +165,42 @@ export async function POST(req: Request): Promise<Response> {
   if (!METHODS.has(method)) return rpcErr(id, 'method not allowed');
 
   try {
-    if (method !== 'getPayerSigner') {
-      const p = await payer();
-      const wire = typeof params?.transaction === 'string' ? params.transaction : '';
-      const c = inspect(wire, p.addr, p.usdcAta);
-      if (c.why) { console.warn('[kora] refused', c.why); return rpcErr(id, c.why); }
-      const token = method === 'estimateTransactionFee' ? params?.fee_token : USDC;
-      if (token !== USDC && token !== SOL) return rpcErr(id, 'fee token must be usdc or sol');
-      const est = await upstream('estimateTransactionFee', { transaction: wire, fee_token: USDC });
-      const n = await need(wire, p.addr, BigInt(est.body?.result?.fee_in_token ?? 0), c.sol);
-      if (n.why) { console.warn('[kora] refused', n.why); return rpcErr(id, n.why); }
-      if (method === 'estimateTransactionFee') {
-        // strom's price for this tx: what the payer really spends, in usdc or in lamports
-        return json({ jsonrpc: '2.0', id, result: { ...(est.body?.result ?? {}), fee_in_token: Number(token === SOL ? n.lamports : n.fee) } });
-      }
-      const paid = c.fee! * 10n >= n.fee! * 9n || c.sol! * 10n >= n.lamports! * 9n;
-      if (!paid) return rpcErr(id, 'relayer fee missing or too low');
+    const p = await payer();
+    if (method === 'getPayerSigner') return json({ jsonrpc: '2.0', id, result: { signer_address: p.addr, payment_address: p.addr } });
+
+    const wire = typeof params?.transaction === 'string' ? params.transaction : '';
+    const c = inspect(wire, p.addr, p.usdcAta);
+    if (c.why) { console.warn('[kora] refused', c.why); return rpcErr(id, c.why); }
+    const token = method === 'estimateTransactionFee' ? params?.fee_token : USDC;
+    if (token !== USDC && token !== SOL) return rpcErr(id, 'fee token must be usdc or sol');
+    const n = await need(wire, p.addr, 0n, c.sol);
+    if (n.why) { console.warn('[kora] refused', n.why); return rpcErr(id, n.why); }
+    if (n.spent! > MAX_SPEND) return rpcErr(id, 'this swap costs the relayer too much. try a smaller amount');
+    if (n.bal! - n.spent! < FLOOR) { console.error('[kora] payer low', String(n.bal)); return rpcErr(id, 'the relayer is out of gas right now. try again later', 503); }
+    // strom's price for this tx: what the payer really spends, in usdc or in lamports
+    if (method === 'estimateTransactionFee') return json({ jsonrpc: '2.0', id, result: { fee_in_token: Number(token === SOL ? n.lamports : n.fee) } });
+
+    const paid = c.fee! * 10n >= n.fee! * 9n || c.sol! * 10n >= n.lamports! * 9n;
+    if (!paid) return rpcErr(id, 'relayer fee missing or too low');
+    const d = new Date().toISOString().slice(0, 10);
+    if (spentToday.d !== d) spentToday = { d, n: 0n };
+    if (spentToday.n + n.spent! > DAILY_SPEND) return rpcErr(id, 'the relayer hit its daily limit. try again tomorrow', 503);
+
+    // every signature but the payer's must already be there: the payer signs last
+    const tx = getTransactionDecoder().decode(getBase64Encoder().encode(wire));
+    const missing = Object.entries(tx.signatures).some(([a, sig]) => a !== p.addr && (!sig || sig.every(b => b === 0)));
+    if (missing) return rpcErr(id, 'sign the swap in your wallet first');
+    const signed = await partiallySignTransaction([p.kp], tx);
+    const sent = await call('sendTransaction', [getBase64EncodedWireTransaction(signed), { encoding: 'base64', preflightCommitment: 'processed', maxRetries: 5 }]);
+    if (sent?.error) {
+      const m = String(sent.error.message ?? '');
+      console.warn('[kora] send failed', m.slice(0, 200));
+      return rpcErr(id, /blockhash/i.test(m) ? 'the swap expired before it was sent. try again' : 'solana refused this swap. try again', 400);
     }
-    const r = await upstream(method, method === 'getPayerSigner' ? {} : { transaction: params.transaction, ...(params.fee_token ? { fee_token: params.fee_token } : {}) });
-    return json({ ...r.body, id }, r.status);
+    spentToday.n += n.spent!;
+    return json({ jsonrpc: '2.0', id, result: { signature: getSignatureFromTransaction(signed), signer_pubkey: p.addr } });
   } catch (e) {
-    console.error('[kora] upstream', (e as Error).message);
+    console.error('[kora]', (e as Error).message);
     return rpcErr(id, 'relayer is busy, try again', 502);
   }
 }
