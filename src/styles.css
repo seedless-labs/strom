@@ -94,3 +94,25 @@ input::placeholder { color: var(--idle); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
+
+/* content pages (ui/Prose.tsx) */
+.prose { max-width: 1080px; margin: 0 auto; display: grid; gap: 72px; }
+.hero { display: grid; gap: 16px; padding-top: 24px; }
+.h1 { color: var(--fg); font-weight: 500; letter-spacing: -.04em; font-size: clamp(36px, 7vw, 72px); line-height: 1.02; margin: 0; max-width: 16ch; text-wrap: balance; }
+.h2 { margin: 0; text-wrap: balance; }
+.lede { color: var(--body); font-size: 17px; line-height: 1.55; max-width: 60ch; margin: 0; }
+.ctas { display: flex; flex-wrap: wrap; gap: 8px; }
+.ctas .btn { display: inline-flex; align-items: center; text-decoration: none; }
+.sect { display: grid; gap: 20px; border-top: 1px solid var(--line); padding-top: 24px; }
+.cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.col { background: var(--bg); padding: 20px; display: grid; gap: 8px; align-content: start; }
+.col h3 { margin: 0; color: var(--fg); font-weight: 500; font-size: 18px; letter-spacing: -.02em; }
+.col p { margin: 0; color: var(--body); font-size: 15px; line-height: 1.55; }
+.go { font: 13px var(--mono); color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--line2); justify-self: start; padding: 6px 0; }
+.go:hover { border-color: var(--acc); }
+.vs { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.vs ul { list-style: none; margin: 0; padding: 20px; background: var(--bg); display: grid; gap: 12px; align-content: start; }
+.vs li { color: var(--body); font-size: 15px; padding-left: 22px; position: relative; }
+.vs .no li::before { content: '×'; position: absolute; left: 0; color: var(--muted); font-family: var(--mono); }
+.vs .yes li::before { content: '✓'; position: absolute; left: 0; color: var(--acc); font-family: var(--mono); }
+@media (max-width: 760px) { .prose { gap: 56px; } .cols, .vs { grid-template-columns: 1fr; } }
