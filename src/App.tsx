@@ -6,6 +6,7 @@ import Track from './pages/Track';
 import Home from './pages/Home';
 import How from './pages/How';
 import About from './pages/About';
+import Builders from './pages/Builders';
 
 const route = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
 
@@ -32,6 +33,7 @@ export default function App() {
     : path === '/track' ? <Track />
     : path === '/how' ? <How />
     : path === '/about' ? <About />
+    : path === '/builders' ? <Builders />
     : <Soon title={NAV.find(n => n.path === path)?.label ?? 'page not found'} />;
 
   return <Shell path={path}>{page}</Shell>;
