@@ -2,15 +2,17 @@
 // to-near: usdc -> near via buildSwap, user signs, our own mainnet kora (:8091) pays gas. asserts user sol spent 0,
 //          waits for the omni relayer to finalise (token fee only) and the near to land on the user's intents account.
 // to-sol:  the whole intents near balance -> sol via 1click, one signed message, relay pays near gas.
-// usage: tsx scripts/live-run.ts to-near <usdc> | watch <sig> [nearBefore] | to-sol
+// plan:    builds the to-near tx and checks it is what the omni relayer can read (v0, omni ix top-level, its accounts
+//          all static keys). read-only, nothing is signed or sent.
+// usage: tsx scripts/live-run.ts plan <usdc> | to-near <usdc> | watch <sig> [nearBefore] | to-sol
 import { readFileSync } from 'fs';
 import { homedir } from 'os';
 import { createSolanaRpc, createKeyPairFromBytes, getAddressFromPublicKey, getBase64Encoder, getTransactionDecoder,
-  partiallySignTransaction, getBase64EncodedWireTransaction, signBytes, signature as sigOf } from '@solana/kit';
-import { buildSwap } from '../src/lib/buildSwap';
+  partiallySignTransaction, getBase64EncodedWireTransaction, signBytes, signature as sigOf, getCompiledTransactionMessageDecoder } from '@solana/kit';
+import { buildSwap, RELAYER_READS } from '../src/lib/buildSwap';
 import { signAndSend } from '../src/lib/kora';
 import { transferStatus } from '../src/lib/omni';
-import { MINTS, type Cfg } from '../src/lib/config';
+import { MINTS, PROGRAMS, type Cfg } from '../src/lib/config';
 import { nearAccountOf, intentsBalances, quoteNearToSol, transferPayload, signedIntent, simulate, publish, swapStatus, TOKENS } from '../src/lib/near';
 
 const cfg: Cfg = { rpc: process.env.LIVE_RPC ?? 'https://api.mainnet-beta.solana.com', kora: process.env.LIVE_KORA ?? 'http://localhost:8091', nearRecipient: 'intents.near' };
@@ -24,11 +26,25 @@ const rpc = createSolanaRpc(cfg.rpc);
 const lamports = async () => (await rpc.getBalance(user).send()).value;
 console.log(`user ${user} · near ${near.slice(0, 12)}…`);
 
-async function toNear(usdc: string) {
+async function plan(usdc: string) {
   const amount = BigInt(Math.round(Number(usdc) * 1e6));
-  const plan = await buildSwap(cfg, { user, inputMint: MINTS.usdc, amount, recipient: 'near:intents.near' });
-  console.log(`plan: ${plan.route} · bridged ${plan.bridged} · relay fee ${plan.relayFee} · kora fee ${plan.koraFee} usdc · v${plan.version} ${plan.accounts} accts ${plan.bytes} b`);
-  const tx = getTransactionDecoder().decode(getBase64Encoder().encode(plan.wire));
+  const p = await buildSwap(cfg, { user, inputMint: MINTS.usdc, amount, recipient: 'near:intents.near' });
+  console.log(`plan: ${p.route} · bridged ${p.bridged} · relay fee ${p.relayFee} · kora fee ${p.koraFee} usdc · v${p.version} ${p.accounts} accts ${p.bytes} b`);
+  // what bridge-sdk-rs get_transfer_event needs: v0/legacy, a top-level omni ix, its accounts in the static keys
+  const m: any = getCompiledTransactionMessageDecoder().decode(getTransactionDecoder().decode(getBase64Encoder().encode(p.wire)).messageBytes);
+  const keys: string[] = m.staticAccounts, omniIdx = keys.indexOf(PROGRAMS.omni);
+  const ix = m.instructions.find((i: any) => i.programAddressIndex === omniIdx);
+  if (p.version !== 0) fail(`v${p.version}: the relayer reads v0 only`);
+  if (!ix) fail('omni ix is not top-level');
+  const dyn = RELAYER_READS.filter(i => ix.accountIndices[i] >= keys.length);
+  if (dyn.length) fail(`omni ix accounts ${dyn.join(',')} come from lookup tables`);
+  console.log(`relayer-readable: v0 · omni ix top-level · accounts ${RELAYER_READS.join('/')} static · mint ${keys[ix.accountIndices[1]].slice(0, 5)} sender ${keys[ix.accountIndices[5]].slice(0, 5)}`);
+  return p;
+}
+
+async function toNear(usdc: string) {
+  const plan2 = await plan(usdc);
+  const tx = getTransactionDecoder().decode(getBase64Encoder().encode(plan2.wire));
   const signed = getBase64EncodedWireTransaction(await partiallySignTransaction([kp], tx as any));
   const before = await lamports(), nearBefore = (await intentsBalances(near))[TOKENS.near];
   const sig = await signAndSend(cfg.kora, signed);
@@ -80,5 +96,5 @@ async function toSol() {
 }
 
 const [mode, arg] = process.argv.slice(2);
-if (mode === 'to-near') await toNear(arg ?? '0.95'); else if (mode === 'watch') await watch(arg, BigInt(process.argv[4] ?? '0')); else if (mode === 'to-sol') await toSol(); else fail('usage: to-near <usdc> | to-sol');
+if (mode === 'plan') await plan(arg ?? '0.04'); else if (mode === 'to-near') await toNear(arg ?? '0.95'); else if (mode === 'watch') await watch(arg, BigInt(process.argv[4] ?? '0')); else if (mode === 'to-sol') await toSol(); else fail('usage: plan <usdc> | to-near <usdc> | watch <sig> [nearBefore] | to-sol');
 process.exit(0);

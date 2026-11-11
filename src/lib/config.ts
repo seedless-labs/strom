@@ -21,6 +21,7 @@ export const PROGRAMS = {
   wormhole: 'worm2ZoG2kUd4vFXhvjh93UUH596ayRfgQ2MgjNMTth',
   wormholeShim: 'EtZMZM22ViKMo4r5y4Anovs3wKQ2owUmDpjygnMMcdEX',
   wormholeShimEa: 'HQS31aApX3DDkuXgSpV9XyDUNtFgQ31pUn5BNWHG2PSp',
+  computeBudget: 'ComputeBudget111111111111111111111111111111',
 } as const;
 
 export const API = {
@@ -29,7 +30,13 @@ export const API = {
   nearRpc: 'https://rpc.mainnet.near.org',
 } as const;
 
-export type Cfg = { rpc: string; kora: string; nearRecipient: string };
+// txVersion: 0 by default. the omni relayer reads solana txs with maxSupportedTransactionVersion 0 (bridge-sdk-rs
+// solana-bridge-client get_transfer_event), so a v1 init_transfer is never indexed and never finalised on near (11 Nov).
+// 1 is the upgrade path once the relayer reads v1.
+export type Cfg = { rpc: string; kora: string; nearRecipient: string; txVersion?: 0 | 1 };
+
+// strom's address lookup table: the constant omni accounts (omniConstants). made once by scripts/make-alt.ts
+export const STROM_ALT: string | undefined = env.VITE_STROM_ALT ?? (globalThis as any).process?.env?.STROM_ALT ?? '6wshRpSHFpzY3aZ9eM9hJHKJPmqbYv9TYy6nUbZ21iZi';
 
 export const defaultCfg: Cfg = {
   rpc: env.VITE_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com',

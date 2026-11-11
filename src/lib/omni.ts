@@ -62,6 +62,20 @@ export async function initTransferIx(p: InitTransfer): Promise<Instruction> {
   };
 }
 
+// the init_transfer accounts that never change (pdas, sysvars, wormhole). they live in strom's lookup table so the
+// v0 tx fits 1232 bytes. never the token (1), sender (5) or config (6): the relayer reads those from static keys
+export async function omniConstants(): Promise<Address[]> {
+  const config = await pda(PROGRAMS.omni, ['config']);
+  const cfgBytes = addr.encode(config) as Uint8Array;
+  const pdas = await Promise.all([
+    pda(PROGRAMS.omni, ['authority']), pda(PROGRAMS.omni, ['sol_vault']),
+    pda(PROGRAMS.wormhole, ['Bridge']), pda(PROGRAMS.wormhole, ['fee_collector']),
+    pda(PROGRAMS.wormhole, ['Sequence', cfgBytes]), pda(PROGRAMS.wormholeShim, [cfgBytes]),
+  ]);
+  return [...pdas, PROGRAMS.clock, PROGRAMS.rent, PROGRAMS.wormhole, PROGRAMS.system, PROGRAMS.wormholeShim, PROGRAMS.wormholeShimEa]
+    .map(x => address(x));
+}
+
 export type OmniFee = { transferred_token_fee?: string | null; native_token_fee?: string | null; [k: string]: unknown };
 
 export async function transferFee(sender: string, recipient: string, mint: string): Promise<OmniFee> {
