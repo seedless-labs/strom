@@ -16,6 +16,7 @@ import { MINTS, PROGRAMS, type Cfg } from '../src/lib/config';
 import { nearAccountOf, intentsBalances, quoteNearToSol, transferPayload, signedIntent, simulate, publish, swapStatus, TOKENS } from '../src/lib/near';
 
 const cfg: Cfg = { rpc: process.env.LIVE_RPC ?? 'https://api.mainnet-beta.solana.com', kora: process.env.LIVE_KORA ?? 'http://localhost:8091', nearRecipient: 'intents.near' };
+const TOK = process.env.LIVE_TOK === 'sol' ? 'sol' : 'usdc'; // input token for plan/to-near
 const fail = (m: string) => { console.error('live run FAIL: ' + m); process.exit(1); };
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 const t0 = Date.now(), at = () => `${Math.round((Date.now() - t0) / 1000)}s`;
@@ -27,8 +28,8 @@ const lamports = async () => (await rpc.getBalance(user).send()).value;
 console.log(`user ${user} · near ${near.slice(0, 12)}…`);
 
 async function plan(usdc: string) {
-  const amount = BigInt(Math.round(Number(usdc) * 1e6));
-  const p = await buildSwap(cfg, { user, inputMint: MINTS.usdc, amount, recipient: 'near:intents.near' });
+  const amount = BigInt(Math.round(Number(usdc) * (TOK === 'sol' ? 1e9 : 1e6)));
+  const p = await buildSwap(cfg, { user, inputMint: MINTS[TOK], amount, recipient: 'near:intents.near' });
   console.log(`plan: ${p.route} · bridged ${p.bridged} · relay fee ${p.relayFee} · kora fee ${p.koraFee} usdc · v${p.version} ${p.accounts} accts ${p.bytes} b`);
   // what bridge-sdk-rs get_transfer_event needs: v0/legacy, a top-level omni ix, its accounts in the static keys
   const m: any = getCompiledTransactionMessageDecoder().decode(getTransactionDecoder().decode(getBase64Encoder().encode(p.wire)).messageBytes);
@@ -55,9 +56,10 @@ async function toNear(usdc: string) {
     if (s?.confirmationStatus === 'confirmed' || s?.confirmationStatus === 'finalized') break;
     if (i > 60) fail('not confirmed in 60s'); await wait(1000);
   }
-  const spent = before - (await lamports());
-  if (spent !== 0n) fail(`user spent ${spent} lamports`);
-  console.log(`(a)(c) confirmed on mainnet at ${at()} · user sol spent 0`);
+  // usdc in: the user spends no sol. sol in: exactly the swapped amount, the wsol rent goes back to the payer
+  const spent = before - (await lamports()), want = TOK === 'sol' ? BigInt(Math.round(Number(usdc) * 1e9)) : 0n;
+  if (spent !== want) fail(`user spent ${spent} lamports, expected ${want}`);
+  console.log(`(a)(c) confirmed on mainnet at ${at()} · user sol spent ${spent}`);
   await watch(sig, nearBefore);
 }
 

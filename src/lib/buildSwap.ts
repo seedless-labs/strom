@@ -74,7 +74,8 @@ export const composeV0 = (feePayer: string, bh: Blockhash, ixs: Instruction[], t
 ) as any);
 
 // jupiter maxAccounts per try, biggest (best price) first
-const ROUTE_SIZES = [JUP_MAX_ACCOUNTS, 30, 26];
+// jupiter can return a heavier route on any quote; the last try asks for a single-pool route, the smallest tx
+const ROUTE_SIZES = [JUP_MAX_ACCOUNTS, 30, 26, -26];
 
 export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
   const rpc = createSolanaRpc(cfg.rpc);
@@ -87,11 +88,15 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
   // jupiter routes vary in size: if a route does not fit, ask for a smaller one
   let tooBig = '';
   for (const max of ROUTE_SIZES) {
-    const q = await quote(r.inputMint, MINTS.near, r.amount, r.slippageBps ?? SLIPPAGE_BPS, max);
+    const q = await quote(r.inputMint, MINTS.near, r.amount, r.slippageBps ?? SLIPPAGE_BPS, Math.abs(max), max < 0);
     const bridged = BigInt(q.otherAmountThreshold);
     // the omni relayer takes its fee out of the bridged near. below that, init_transfer fails on chain (InvalidFee)
     if (bridged <= relayFee) throw new Error(`amount too small: the bridge fee is ${(Number(relayFee) / 10 ** DECIMALS.near).toFixed(4)} near. try a bigger amount`);
-    const [{ ixs: jup, alts }, { value: bh }] = await Promise.all([swapInstructions(q, r.user, signer), rpc.getLatestBlockhash().send()]);
+    // sol in: the user holds sol, so the user funds the temporary wsol account and gets its rent back on close.
+    // if the relayer funded it, the close would pay the relayer, and kora prices that by reading an account
+    // that only exists inside this tx (AccountNotFound upstream).
+    const jupPayer = r.inputMint === MINTS.sol ? undefined : signer;
+    const [{ ixs: jup, alts }, { value: bh }] = await Promise.all([swapInstructions(q, r.user, jupPayer), rpc.getLatestBlockhash().send()]);
     const omni = await initTransferIx({ user: r.user, mint: MINTS.near, amount: bridged, recipient: r.recipient, fee: relayFee,
       payer: signer, message: omniMessage(r) });
     const ixsFor = (fee: bigint): Instruction[] => [feeTransferIx(userFee, koraFeeAta, r.user, fee), ...jup, omni];
