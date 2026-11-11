@@ -38,6 +38,15 @@ export async function quote(inputMint: string, outputMint: string, amount: bigin
   return q;
 }
 
+// with a payer, kora funds the user's temporary wsol account. jupiter's cleanup closes it with the rent going to the user,
+// which would let every sol swap pocket the payer's rent. send it back to the payer instead (spl CloseAccount = 9:
+// [account, destination, owner]); the proxy only allows the payer in that destination slot.
+const TOKEN_PROGRAM = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA';
+export function rentBack(i: JupIx, payer?: string): JupIx {
+  if (!payer || i.programId !== TOKEN_PROGRAM || b64(i.data)[0] !== 9 || !i.accounts[1]) return i;
+  return { ...i, accounts: i.accounts.map((a, n) => (n === 1 ? { ...a, pubkey: payer } : a)) };
+}
+
 // compute-budget ixs are dropped: tx v1 carries the cu limit in its config
 export async function swapInstructions(q: Quote, user: string, payer?: string): Promise<{ ixs: Instruction[]; alts: string[] }> {
   const si = await jup('/swap-instructions', {
@@ -51,7 +60,7 @@ export async function swapInstructions(q: Quote, user: string, payer?: string): 
     ixs: [
       ...(si.setupInstructions ?? []).map(toIx),
       toIx(si.swapInstruction),
-      ...(si.cleanupInstruction ? [toIx(si.cleanupInstruction)] : []),
+      ...(si.cleanupInstruction ? [toIx(rentBack(si.cleanupInstruction, payer))] : []),
     ],
     alts: si.addressLookupTableAddresses ?? [],
   };
