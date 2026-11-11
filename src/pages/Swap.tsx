@@ -8,6 +8,15 @@ import {
 } from '../lib/flow';
 
 type Dir = 'to-near' | 'to-sol';
+
+// a link from the agent page can prefill the board: #/swap?dir=to-near&tok=sol&amt=max. it never sends.
+function fromLink() {
+  const qs = new URLSearchParams(location.hash.split('?')[1] ?? '');
+  const dir: Dir = qs.get('dir') === 'to-sol' ? 'to-sol' : 'to-near';
+  const tok: Tok = qs.get('tok') === 'sol' ? 'sol' : 'usdc';
+  const a = qs.get('amt') ?? '';
+  return { dir, tok, max: a === 'max', amt: /^\d{1,12}(\.\d{1,9})?$/.test(a) ? a : a === 'max' ? '' : '1' };
+}
 export const LAST = 'strom-last'; // last transfer, read by the track page
 
 function Wire({ live, dir }: { live: boolean; dir: Dir }) {
@@ -26,9 +35,11 @@ function Wire({ live, dir }: { live: boolean; dir: Dir }) {
 export default function Swap() {
   const [wallets, setWallets] = useState<Wallet[]>(solanaWallets);
   const [w, setW] = useState<Wallet>(); const [acct, setAcct] = useState<WalletAccount>();
-  const [dir, setDir] = useState<Dir>('to-near');
-  const [tok, setTok] = useState<Tok>('usdc');
-  const [amt, setAmt] = useState('1');
+  const [init] = useState(fromLink);
+  const [dir, setDir] = useState<Dir>(init.dir);
+  const [tok, setTok] = useState<Tok>(init.tok);
+  const [amt, setAmt] = useState(init.amt);
+  const [max, setMax] = useState(init.max); // "all of it": filled from the near balance, else the user types it
   const [plan, setPlan] = useState<SwapPlan>(); const [q, setQ] = useState<Quote>();
   const [nearBal, setNearBal] = useState<bigint>();
   const [busy, setBusy] = useState(''); const [err, setErr] = useState('');
@@ -40,6 +51,9 @@ export default function Swap() {
     if (!acct || dir !== 'to-sol') return;
     nearBalance(acct.address).then(setNearBal).catch(() => setNearBal(undefined));
   }, [acct, dir]);
+  useEffect(() => {
+    if (max && dir === 'to-sol' && nearBal !== undefined) { setAmt(fmt(nearBal, NEAR_DECIMALS, 6)); setMax(false); }
+  }, [max, dir, nearBal]);
 
   const run = (label: string, f: () => Promise<void>) => async () => {
     setErr(''); setBusy(label);
@@ -90,11 +104,12 @@ export default function Swap() {
             )}
           </div>
           <div className="amount">
-            <input inputMode="decimal" aria-label="amount to send" value={amt} onChange={e => setAmt(e.target.value.replace(/[^0-9.]/g, ''))} />
+            <input inputMode="decimal" aria-label="amount to send" value={amt} placeholder={max ? 'all' : '0'} onChange={e => { setMax(false); setAmt(e.target.value.replace(/[^0-9.]/g, '')); }} />
             {dir === 'to-near'
               ? <button className="token" onClick={() => setTok(tok === 'usdc' ? 'sol' : 'usdc')} aria-label="change token">{tok} ⇄</button>
               : <span className="token">near</span>}
           </div>
+          {max && dir === 'to-near' && <span className="label">type how much {tok} to move. strom does not read your solana balance yet.</span>}
         </div>
         <div className="flip">
           <button className="icon-btn" aria-label="flip direction" onClick={() => setDir(dir === 'to-near' ? 'to-sol' : 'to-near')}>⇅</button>
