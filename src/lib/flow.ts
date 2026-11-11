@@ -5,7 +5,8 @@ import type { Wallet, WalletAccount } from '@wallet-standard/base';
 import { MINTS, DECIMALS, defaultCfg } from './config';
 import { buildSwap, type SwapPlan } from './buildSwap';
 import { signAndSend } from './kora';
-import { transferStatus } from './omni';
+import { transferStatus, ata } from './omni';
+import { createSolanaRpc, address } from '@solana/kit';
 import { signWire, signMsg } from '../wallet';
 import { nearAccountOf, intentsBalances, quoteNearToSol, transferPayload, signedIntent, simulate, publish, swapStatus, TOKENS, NEAR_DECIMALS, type Quote } from './near';
 
@@ -18,6 +19,16 @@ export const toBase = (v: string, d: number) => {
   return BigInt(i || '0') * 10n ** BigInt(d) + BigInt((f + '0'.repeat(d)).slice(0, d) || '0');
 };
 export const fmt = (v: bigint | string, d: number, p = 4) => (Number(v) / 10 ** d).toFixed(p);
+/** what the wallet holds on solana, in base units. usdc reads the wallet's usdc account (0 if it has none) */
+export async function solanaBalance(owner: string, tok: Tok): Promise<bigint> {
+  const rpc = createSolanaRpc(defaultCfg.rpc);
+  if (tok === 'sol') return BigInt((await rpc.getBalance(address(owner)).send()).value);
+  try { return BigInt((await rpc.getTokenAccountBalance(address(await ata(owner, MINTS.usdc))).send()).value.amount); }
+  catch { return 0n; }
+}
+// "all of it" keeps a little back: sol covers the relayer fee and the temporary wsol account; usdc covers the 0.01 fee
+export const KEEP = { sol: 5_000_000n, usdc: 10_000n } as const;
+export const spendable = (bal: bigint, tok: Tok) => (bal > KEEP[tok] ? bal - KEEP[tok] : 0n);
 export const short = (s: string) => `${s.slice(0, 4)}…${s.slice(-4)}`;
 
 /** step names the ui shows, in order */
