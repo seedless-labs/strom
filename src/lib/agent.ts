@@ -1,6 +1,6 @@
 // "tell strom": plain words in, a ready swap out. reads only. it never signs and never sends;
 // the result is a link that prefills the swap page, and your wallet still approves every move.
-// /api/agent asks claude when a key is set; the local parser below is the fallback and the guard.
+// /api/agent asks the model through vercel ai gateway (same path as leash); the local parser below is the fallback and the guard.
 
 export type Intent = {
   kind: 'swap' | 'quote' | 'track' | 'unknown';
