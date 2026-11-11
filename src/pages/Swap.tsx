@@ -4,7 +4,7 @@ import type { Wallet, WalletAccount } from '@wallet-standard/base';
 import { solanaWallets, onWalletsChange, connect } from '../wallet';
 import {
   quoteToNear, sendToNear, nearBalance, quoteToSol, sendToSol, nearAccountOf,
-  fmt, short, DECIMALS, NEAR_DECIMALS, type Tok, type SwapPlan, type Quote,
+  fmt, short, DECIMALS, solanaBalance, spendable, NEAR_DECIMALS, type Tok, type SwapPlan, type Quote,
 } from '../lib/flow';
 
 type Dir = 'to-near' | 'to-sol';
@@ -42,6 +42,7 @@ export default function Swap() {
   const [max, setMax] = useState(init.max); // "all of it": filled from the near balance, else the user types it
   const [plan, setPlan] = useState<SwapPlan>(); const [q, setQ] = useState<Quote>();
   const [nearBal, setNearBal] = useState<bigint>();
+  const [solBal, setSolBal] = useState<bigint>();
   const [busy, setBusy] = useState(''); const [err, setErr] = useState('');
 
   useEffect(() => onWalletsChange(() => setWallets(solanaWallets())), []);
@@ -52,8 +53,15 @@ export default function Swap() {
     nearBalance(acct.address).then(setNearBal).catch(() => setNearBal(undefined));
   }, [acct, dir]);
   useEffect(() => {
+    setSolBal(undefined);
+    if (!acct || dir !== 'to-near') return;
+    solanaBalance(acct.address, tok).then(setSolBal).catch(() => setSolBal(undefined));
+  }, [acct, dir, tok]);
+  const solMax = solBal === undefined ? '' : fmt(spendable(solBal, tok), DECIMALS[tok], tok === 'sol' ? 6 : 2);
+  useEffect(() => {
     if (max && dir === 'to-sol' && nearBal !== undefined) { setAmt(fmt(nearBal, NEAR_DECIMALS, 6)); setMax(false); }
-  }, [max, dir, nearBal]);
+    if (max && dir === 'to-near' && solMax) { setAmt(solMax); setMax(false); }
+  }, [max, dir, nearBal, solMax]);
 
   const run = (label: string, f: () => Promise<void>) => async () => {
     setErr(''); setBusy(label);
@@ -102,6 +110,11 @@ export default function Swap() {
                 balance {fmt(nearBal, NEAR_DECIMALS)}
               </button>
             )}
+            {dir === 'to-near' && solBal !== undefined && (
+              <button className="label" style={{ background: 'none', border: 0, cursor: 'pointer' }} onClick={() => setAmt(solMax)}>
+                balance {fmt(solBal, DECIMALS[tok], tok === 'sol' ? 4 : 2)}
+              </button>
+            )}
           </div>
           <div className="amount">
             <input inputMode="decimal" aria-label="amount to send" value={amt} placeholder={max ? 'all' : '0'} onChange={e => { setMax(false); setAmt(e.target.value.replace(/[^0-9.]/g, '')); }} />
@@ -109,7 +122,7 @@ export default function Swap() {
               ? <button className="token" onClick={() => setTok(tok === 'usdc' ? 'sol' : 'usdc')} aria-label="change token">{tok} ⇄</button>
               : <span className="token">near</span>}
           </div>
-          {max && dir === 'to-near' && <span className="label">type how much {tok} to move. strom does not read your solana balance yet.</span>}
+          {max && dir === 'to-near' && !acct && <span className="label">connect your wallet to fill in all your {tok}.</span>}
         </div>
         <div className="flip">
           <button className="icon-btn" aria-label="flip direction" onClick={() => setDir(dir === 'to-near' ? 'to-sol' : 'to-near')}>⇅</button>
