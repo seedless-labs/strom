@@ -53,7 +53,7 @@ export default function Builders() {
         <Qa items={[
           ['solana → near', 'live on mainnet.'],
           ['near → solana', 'live on mainnet through 1click.'],
-          ['agent', 'coming. it will read and suggest, never sign.'],
+          ['agent', 'live. it reads and suggests, never signs.'],
         ]} />
         <p className="lede">
           we found a gap while building: a solana v1 transaction cannot be finished by the omni relayer today, so strom sends v0.
