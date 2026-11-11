@@ -20,7 +20,7 @@ export default function How() {
         <Qa items={[
           ['a solana wallet', 'any wallet that supports the solana wallet standard, in your browser or inside your wallet app.'],
           ['usdc or sol', 'the money you want to move. that is it.'],
-          ['no sol for gas', 'gas is a few cents of usdc from your wallet, so you never buy sol or near first. swapping sol? keep a little usdc for gas.'],
+          ['no sol for gas', 'gas is paid in the token you swap: a few cents of usdc when you swap usdc, a little sol when you swap sol. you never buy near or anything else first.'],
           ['a near account', 'not needed. near lands in your near intents account, which is tied to your solana wallet.'],
         ]} />
       </Section>
@@ -37,7 +37,7 @@ export default function How() {
       <Section n="04" kicker="questions" title="the short answers.">
         <Qa items={[
           ['is my money safe?', 'strom never holds your money or your keys. every move is approved by you, in your wallet.'],
-          ['what does it cost?', <>you see every fee before you approve: a few cents of usdc for gas and a small bridge fee taken from the near you get. see the <a href="#/builders">full route</a>.</>],
+          ['what does it cost?', <>you see every fee before you approve: a few cents of gas, in the token you swap, and a small bridge fee taken from the near you get. see the <a href="#/builders">full route</a>.</>],
           ['what if it is slow?', <>open <a href="#/track">where is my money</a>, paste your transaction, and see each step in plain words, with links to the explorers.</>],
           ['do i need to know crypto?', 'no. if you can send a payment, you can use strom.'],
         ]} />

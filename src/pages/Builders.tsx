@@ -6,7 +6,7 @@ const TX = `// solana → near · one v0 transaction, signed by your wallet, fee
 [ compute budget ]
 [ jupiter swap   ]  usdc or sol → near (omni-bridged mint)
 [ omni bridge    ]  init_transfer → intents.near
-[ kora fee       ]  usdc → relayer
+[ kora fee       ]  usdc or sol → relayer
 // lookup tables: jupiter's + strom's own for the fixed omni accounts
 
 // near → solana · one signed message
@@ -43,7 +43,7 @@ export default function Builders() {
           ['omni bridge', 'init_transfer on solana sends the near across. the omni relayer finishes it on near.'],
           ['near intents', 'the landing account for near, tied to your solana wallet. also the source for the way back.'],
           ['1click', 'quotes and runs near → solana. refunds go back to the account they came from.'],
-          ['kora', 'a gasless relayer. it pays the sol network fee and takes its fee in usdc from your wallet.'],
+          ['kora', 'a gasless relayer. it pays the sol network fee and takes its fee from your wallet in the token you swap: usdc, or sol.'],
           ['v0 + lookup tables', 'swap, bridge and fee fit in one transaction. strom keeps its own lookup table for the fixed omni accounts.'],
           ['wallet standard', 'any solana wallet works. there is no default wallet brand.'],
         ]} />

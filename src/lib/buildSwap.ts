@@ -1,4 +1,4 @@
-// one tx, one user signature: kora fee (usdc) + jupiter swap into omni-bridged near + omni init_transfer to near.
+// one tx, one user signature: kora fee (usdc, or sol when sol goes in) + jupiter swap into omni-bridged near + omni init_transfer to near.
 // kora is the fee payer and co-signs + sends. v0 + jupiter lookup tables by default: the omni relayer only reads v0/legacy
 // (root cause of the stuck 10 Nov run). v1 (proven p3c) stays behind cfg.txVersion = 1, falling back to v0 over its caps.
 import {
@@ -10,13 +10,14 @@ import {
 import { MINTS, DECIMALS, PROGRAMS, STROM_ALT, JUP_MAX_ACCOUNTS, CU_LIMIT, SLIPPAGE_BPS, type Cfg } from './config';
 import { quote, swapInstructions, routeLabel, type Quote } from './jupiter';
 import { initTransferIx, ata, transferFee } from './omni';
-import { payerSigner, estimateFee, feeTransferIx } from './kora';
+import { payerSigner, estimateFee, feeTransferIx, solFeeIx } from './kora';
 import { nearAccountOf } from './near';
 
 export const V1_MAX_ACCOUNTS = 64;
 export const V1_MAX_BYTES = 4096;
 export const V0_MAX_BYTES = 1232;
 const FALLBACK_FEE = 10_000n; // 0.01 usdc if kora returns 0
+const FALLBACK_SOL_FEE = 100_000n; // 0.0001 sol if kora returns 0
 
 export type SwapPlan = {
   quote: Quote; route: string;
@@ -79,12 +80,15 @@ const ROUTE_SIZES = [JUP_MAX_ACCOUNTS, 30, 26, -26];
 
 export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
   const rpc = createSolanaRpc(cfg.rpc);
-  const feeMint = r.feeMint ?? MINTS.usdc;
+  // sol in pays the relayer in sol: a sol-only wallet needs no usdc
+  const solIn = r.inputMint === MINTS.sol;
+  const feeMint = r.feeMint ?? (solIn ? MINTS.sol : MINTS.usdc);
+  const solFee = feeMint === MINTS.sol;
   const [signer, omniFee] = await Promise.all([payerSigner(cfg.kora), transferFee(r.user, r.recipient, MINTS.near)]);
   // relayer fee paid in the bridged token (taken from the amount), native fee 0 so the user needs no sol.
   // ⚠ token-fee-only relaying is unverified until the funded run
   const relayFee = BigInt(omniFee.transferred_token_fee ?? 0);
-  const [userFee, koraFeeAta] = await Promise.all([ata(r.user, feeMint), ata(signer, feeMint)]);
+  const [userFee, koraFeeAta] = solFee ? ['', ''] : await Promise.all([ata(r.user, feeMint), ata(signer, feeMint)]);
   // jupiter routes vary in size: if a route does not fit, ask for a smaller one
   let tooBig = '';
   for (const max of ROUTE_SIZES) {
@@ -95,11 +99,12 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
     // sol in: the user holds sol, so the user funds the temporary wsol account and gets its rent back on close.
     // if the relayer funded it, the close would pay the relayer, and kora prices that by reading an account
     // that only exists inside this tx (AccountNotFound upstream).
-    const jupPayer = r.inputMint === MINTS.sol ? undefined : signer;
+    const jupPayer = solIn ? undefined : signer;
     const [{ ixs: jup, alts }, { value: bh }] = await Promise.all([swapInstructions(q, r.user, jupPayer), rpc.getLatestBlockhash().send()]);
     const omni = await initTransferIx({ user: r.user, mint: MINTS.near, amount: bridged, recipient: r.recipient, fee: relayFee,
       payer: signer, message: omniMessage(r) });
-    const ixsFor = (fee: bigint): Instruction[] => [feeTransferIx(userFee, koraFeeAta, r.user, fee), ...jup, omni];
+    const feeIx = (fee: bigint) => solFee ? solFeeIx(r.user, signer, fee) : feeTransferIx(userFee, koraFeeAta, r.user, fee);
+    const ixsFor = (fee: bigint): Instruction[] => [feeIx(fee), ...jup, omni];
 
     const accounts = uniqueAccounts(signer, ixsFor(1n));
     const v1 = async (fee: bigint) => getBase64EncodedWireTransaction(composeV1(signer, bh, ixsFor(fee)));
@@ -114,7 +119,7 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
     const size = b64len(await build(1n));
     if (size > cap) { tooBig = `${size} bytes (v${version} cap ${cap})`; continue; }
 
-    const koraFee = (await estimateFee(cfg.kora, await build(1n), feeMint)) || FALLBACK_FEE;
+    const koraFee = (await estimateFee(cfg.kora, await build(1n), feeMint)) || (solFee ? FALLBACK_SOL_FEE : FALLBACK_FEE);
     const wire = await build(koraFee);
     const bytes = b64len(wire);
     return { quote: q, route: routeLabel(q), bridged, koraFee, relayFee, feeMint, version, accounts, bytes, wire };

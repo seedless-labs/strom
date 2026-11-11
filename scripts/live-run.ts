@@ -30,7 +30,7 @@ console.log(`user ${user} · near ${near.slice(0, 12)}…`);
 async function plan(usdc: string) {
   const amount = BigInt(Math.round(Number(usdc) * (TOK === 'sol' ? 1e9 : 1e6)));
   const p = await buildSwap(cfg, { user, inputMint: MINTS[TOK], amount, recipient: 'near:intents.near' });
-  console.log(`plan: ${p.route} · bridged ${p.bridged} · relay fee ${p.relayFee} · kora fee ${p.koraFee} usdc · v${p.version} ${p.accounts} accts ${p.bytes} b`);
+  console.log(`plan: ${p.route} · bridged ${p.bridged} · relay fee ${p.relayFee} · kora fee ${p.koraFee} ${p.feeMint === 'So11111111111111111111111111111111111111112' ? 'lamports' : 'usdc'} · v${p.version} ${p.accounts} accts ${p.bytes} b`);
   // what bridge-sdk-rs get_transfer_event needs: v0/legacy, a top-level omni ix, its accounts in the static keys
   const m: any = getCompiledTransactionMessageDecoder().decode(getTransactionDecoder().decode(getBase64Encoder().encode(p.wire)).messageBytes);
   const keys: string[] = m.staticAccounts, omniIdx = keys.indexOf(PROGRAMS.omni);
@@ -56,8 +56,8 @@ async function toNear(usdc: string) {
     if (s?.confirmationStatus === 'confirmed' || s?.confirmationStatus === 'finalized') break;
     if (i > 60) fail('not confirmed in 60s'); await wait(1000);
   }
-  // usdc in: the user spends no sol. sol in: exactly the swapped amount, the wsol rent goes back to the payer
-  const spent = before - (await lamports()), want = TOK === 'sol' ? BigInt(Math.round(Number(usdc) * 1e9)) : 0n;
+  // usdc in: the user spends no sol. sol in: the swapped amount plus the relayer fee in sol, the wsol rent comes back
+  const spent = before - (await lamports()), want = TOK === 'sol' ? BigInt(Math.round(Number(usdc) * 1e9)) + plan2.koraFee : 0n;
   if (spent !== want) fail(`user spent ${spent} lamports, expected ${want}`);
   console.log(`(a)(c) confirmed on mainnet at ${at()} · user sol spent ${spent}`);
   await watch(sig, nearBefore);

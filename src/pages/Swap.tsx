@@ -128,7 +128,9 @@ export default function Swap() {
       <dl className="facts">
         <dt>to</dt><dd>{acct ? `your intents account ${short(nearAccountOf(acct.address))}` : 'your intents account'}</dd>
         {dir === 'to-near' ? <>
-          <dt>gas</dt><dd>{plan ? `${fmt(plan.koraFee, DECIMALS.usdc, 2)} usdc · no sol needed` : 'paid in usdc · no sol needed'}</dd>
+          <dt>gas</dt><dd>{tok === 'sol'
+            ? (plan ? `${fmt(plan.koraFee, DECIMALS.sol, 5)} sol · from the sol you swap` : 'a little sol · nothing else needed')
+            : (plan ? `${fmt(plan.koraFee, DECIMALS.usdc, 2)} usdc · no sol needed` : 'paid in usdc · no sol needed')}</dd>
           <dt>bridge fee</dt><dd>{plan ? `${fmt(plan.relayFee, DECIMALS.near)} near` : 'taken from what you get'}</dd>
           {plan && <><dt>route</dt><dd>{plan.route.toLowerCase()}</dd></>}
         </> : <>
