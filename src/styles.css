@@ -94,14 +94,3 @@ input::placeholder { color: var(--idle); }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 
-/* legacy test surface (App.tsx until the swap page replaces it) */
-main { max-width: 480px; margin: 0 auto; padding: 24px 16px; display: grid; gap: 12px; }
-h1 { color: var(--fg); font-size: 20px; font-weight: 600; }
-.card { background: var(--panel); border: 1px solid var(--line); padding: 14px; display: grid; gap: 6px; }
-.big { color: var(--fg); font: 600 28px var(--mono); }
-.row { display: flex; justify-content: space-between; font: 13px var(--mono); color: var(--body); }
-main input, main select { width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--line2); padding: 10px; font: 15px var(--mono); }
-main button { background: var(--fg); color: var(--bg); border: 0; padding: 14px; font: 600 15px var(--sans); cursor: pointer; }
-main button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line2); }
-main button:disabled { opacity: .4; cursor: default; }
-.top { display: flex; justify-content: space-between; align-items: center; }
