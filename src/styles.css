@@ -31,7 +31,7 @@ input::placeholder { color: var(--idle); }
 /* shell */
 .shell { min-height: 100vh; display: flex; flex-direction: column; }
 .bar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px; max-width: 1200px; width: 100%; margin: 0 auto; }
-.lockup { display: inline-flex; align-items: center; gap: 10px; color: var(--fg); text-decoration: none; }
+.lockup { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); text-decoration: none; }
 .lockup b { font-size: 20px; font-weight: 600; letter-spacing: -.04em; }
 .lockup small { display: inline-flex; align-items: center; gap: 6px; font: 11px var(--mono); color: var(--muted); }
 .lockup svg { display: block; }
