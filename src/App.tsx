@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { Shell, NAV } from './ui/Shell';
 import Swap from './pages/Swap';
+import Track from './pages/Track';
 
 const route = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
 
@@ -24,6 +25,7 @@ export default function App() {
   }, []);
 
   const page = path === '/' || path === '/swap' ? <Swap />
+    : path === '/track' ? <Track />
     : <Soon title={NAV.find(n => n.path === path)?.label ?? 'page not found'} />;
 
   return <Shell path={path === '/' ? '/swap' : path}>{page}</Shell>;
