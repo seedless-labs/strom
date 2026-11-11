@@ -107,7 +107,7 @@ async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n)
   ]);
   const v = sim?.result?.value;
   const after = v?.accounts?.[0]?.lamports;
-  if (v?.err || typeof after !== 'number' || typeof bal?.result?.value !== 'number') return { why: 'transaction does not simulate' };
+  if (v?.err || typeof after !== 'number' || typeof bal?.result?.value !== 'number') return { why: 'this swap would fail on solana. check your wallet has enough for the amount and the fee' };
   const net = BigInt(bal.result.value) - BigInt(after) + solIn;
   const spent = net > 0n ? net : 0n;
   const usd = await solPrice();

@@ -4,7 +4,7 @@ import type { Wallet, WalletAccount } from '@wallet-standard/base';
 import { solanaWallets, onWalletsChange, connect } from '../wallet';
 import {
   quoteToNear, sendToNear, nearBalance, quoteToSol, sendToSol, nearAccountOf,
-  fmt, short, DECIMALS, solanaBalance, spendable, NEAR_DECIMALS, type Tok, type SwapPlan, type Quote,
+  fmt, short, DECIMALS, solanaBalance, spendable, toBase, NEAR_DECIMALS, type Tok, type SwapPlan, type Quote,
 } from '../lib/flow';
 
 type Dir = 'to-near' | 'to-sol';
@@ -69,6 +69,8 @@ export default function Swap() {
   };
   const pick = (x: Wallet) => run('connecting', async () => { setAcct(await connect(x)); setW(x); })();
   const review = run('getting a quote', async () => {
+    if (dir === 'to-near' && solBal !== undefined && toBase(amt, DECIMALS[tok]) > spendable(solBal, tok))
+      throw new Error(`not enough ${tok}: you can send up to ${solMax || '0'} ${tok}. a little stays back for the relayer fee`);
     if (dir === 'to-near') setPlan(await quoteToNear(acct!.address, tok, amt));
     else setQ(await quoteToSol(acct!.address, amt));
   });
