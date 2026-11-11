@@ -4,6 +4,7 @@ import { Shell, NAV } from './ui/Shell';
 import Swap from './pages/Swap';
 import Track from './pages/Track';
 import Home from './pages/Home';
+import How from './pages/How';
 
 const route = () => (location.hash.replace(/^#/, '') || '/').split('?')[0];
 
@@ -28,6 +29,7 @@ export default function App() {
   const page = path === '/' ? <Home />
     : path === '/swap' ? <Swap />
     : path === '/track' ? <Track />
+    : path === '/how' ? <How />
     : <Soon title={NAV.find(n => n.path === path)?.label ?? 'page not found'} />;
 
   return <Shell path={path}>{page}</Shell>;
