@@ -42,6 +42,10 @@ const Moon = () => (
 export function Shell({ path, children }: { path: string; children: ReactNode }) {
   const [theme, toggle] = useTheme();
   const next = theme === 'dark' ? 'light' : 'dark';
+  // on the mobile swipe strip, keep the current page's link in view
+  useEffect(() => {
+    document.querySelector('.nav a[aria-current="page"]')?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  }, [path]);
   return (
     <div className="shell">
       <header className="bar">
