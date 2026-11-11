@@ -30,7 +30,7 @@ export default function Home() {
           </ul>
           <ul className="yes">
             <li>one screen, one approval in the wallet you already use</li>
-            <li>gas paid in usdc, no sol needed</li>
+            <li>gas paid in the token you swap, nothing else needed</li>
             <li>a tracker that shows every step in plain words</li>
           </ul>
         </div>

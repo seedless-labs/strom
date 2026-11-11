@@ -3,10 +3,10 @@
 // kora pays real sol, so a request must look like strom's own transaction or it is refused:
 // - only getPayerSigner, estimateTransactionFee and signAndSendTransaction
 // - the payer is the fee payer and nothing else: no top-level system or token instruction may touch it,
-//   except as the destination of a CloseAccount (the wsol rent coming back)
+//   except as the destination of a CloseAccount (the wsol rent coming back) or of a system Transfer (a sol fee)
 // - every top-level program is one strom uses, and the omni bridge is in it
-// - signAndSend must carry a usdc fee to the payer's usdc account that covers what the tx really costs the payer
-//   (simulated: network fee plus any rent it funds), never under 0.01 usdc
+// - signAndSend must carry a fee to the payer, in usdc (to its usdc account) or in sol (a system transfer), that covers
+//   what the tx really costs the payer (simulated: network fee plus any rent it funds), never under 0.01 usdc worth
 // plus a per-ip limit, a body cap, a short upstream timeout and a daily ceiling per instance.
 import {
   address, getAddressEncoder, getProgramDerivedAddress, getBase64Encoder, getTransactionDecoder,
@@ -93,7 +93,9 @@ async function solPrice(): Promise<number> {
 // what this tx really costs the payer: simulate it and read the payer's lamports before and after.
 // this catches network fees and any rent the payer funds (new token accounts), which a user could later close and keep.
 // the usdc fee must cover it with a 20% margin, and never less than strom's floor.
-async function need(wire: string, payerAddr: string, quoted: bigint): Promise<{ why?: string; fee?: bigint }> {
+// solIn: lamports the tx itself pays the payer as its fee, added back so the fee is not netted against its own cost.
+// returns the fee in micro-usdc (fee) and the same floor/cost in lamports (lamports)
+async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n): Promise<{ why?: string; fee?: bigint; lamports?: bigint }> {
   const call = (method: string, params: unknown[]) => fetch(RPC, {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(8000),
@@ -106,15 +108,20 @@ async function need(wire: string, payerAddr: string, quoted: bigint): Promise<{ 
   const v = sim?.result?.value;
   const after = v?.accounts?.[0]?.lamports;
   if (v?.err || typeof after !== 'number' || typeof bal?.result?.value !== 'number') return { why: 'transaction does not simulate' };
-  const spent = BigInt(Math.max(0, bal.result.value - after));
+  const net = BigInt(bal.result.value) - BigInt(after) + solIn;
+  const spent = net > 0n ? net : 0n;
   const usd = await solPrice();
+  const cents = BigInt(Math.ceil(usd * 100));
   // lamports → micro-usdc: lamports * usd / 1e3, plus 20%
-  const cost = (spent * BigInt(Math.ceil(usd * 100)) * 12n) / (1000n * 100n * 10n) + 1n;
+  const cost = (spent * cents * 12n) / (1000n * 100n * 10n) + 1n;
   const fee = [BASE_FEE, quoted, cost].reduce((a, b) => (b > a ? b : a));
-  return { fee };
+  // the same in lamports: the usdc floor converted at a price rounded up (never undercharges), or the cost plus 20%
+  const floor = (BASE_FEE * 1000n * 100n) / cents + 1n;
+  const lamports = [floor, (spent * 12n) / 10n + 1n].reduce((a, b) => (b > a ? b : a));
+  return { fee, lamports };
 }
 
-type Check = { why?: string; fee?: bigint };
+type Check = { why?: string; fee?: bigint; sol?: bigint };
 function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
   let msg: CompiledTransactionMessage;
   try {
@@ -124,7 +131,7 @@ function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
   if (!('instructions' in msg)) return { why: 'strom sends v0 transactions only' };
   const keys = msg.staticAccounts.map(String);
   if (keys[0] !== payerAddr) return { why: 'fee payer is not the relayer' };
-  let omni = false; let fee = 0n;
+  let omni = false; let fee = 0n; let sol = 0n;
   for (const ix of msg.instructions) {
     const prog = keys[ix.programAddressIndex];
     if (!prog || !ALLOWED.has(prog)) return { why: `program not allowed: ${prog ?? '?'}` };
@@ -134,14 +141,18 @@ function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
     // the one way the payer may appear: as the destination of an spl CloseAccount (9: [account, destination, owner]),
     // which returns the rent of the temporary wsol account it funded
     const rentBack = prog === TOKEN && d?.[0] === 9 && accts[1] === 0 && accts[0] !== 0 && accts[2] !== 0;
-    if ((prog === SYSTEM || prog === TOKEN || prog === TOKEN22) && accts.includes(0) && !rentBack) return { why: 'instruction spends the relayer' };
+    // or as the destination of a system Transfer (2: [from, to] · u64 le lamports at 4): the sol fee, paid by the user
+    const solFee = prog === SYSTEM && d?.length === 12 && d[0] === 2 && d[1] === 0 && d[2] === 0 && d[3] === 0
+      && accts.length === 2 && accts[1] === 0 && accts[0] !== 0;
+    if ((prog === SYSTEM || prog === TOKEN || prog === TOKEN22) && accts.includes(0) && !rentBack && !solFee) return { why: 'instruction spends the relayer' };
+    if (solFee) sol += new DataView(d!.buffer, d!.byteOffset + 4, 8).getBigUint64(0, true);
     // spl Transfer (3): [src, dst, owner] · amount u64 le at 1
     if (prog === TOKEN && d && d[0] === 3 && d.length >= 9 && keys[accts[1]] === payerUsdc) {
       fee += new DataView(d.buffer, d.byteOffset + 1, 8).getBigUint64(0, true);
     }
   }
   if (!omni) return { why: 'not a strom transaction' };
-  return { fee };
+  return { fee, sol };
 }
 
 export async function POST(req: Request): Promise<Response> {
@@ -162,15 +173,17 @@ export async function POST(req: Request): Promise<Response> {
       const wire = typeof params?.transaction === 'string' ? params.transaction : '';
       const c = inspect(wire, p.addr, p.usdcAta);
       if (c.why) { console.warn('[kora] refused', c.why); return rpcErr(id, c.why); }
-      if (method === 'estimateTransactionFee' && params?.fee_token !== USDC) return rpcErr(id, 'fee token must be usdc');
+      const token = method === 'estimateTransactionFee' ? params?.fee_token : USDC;
+      if (token !== USDC && token !== SOL) return rpcErr(id, 'fee token must be usdc or sol');
       const est = await upstream('estimateTransactionFee', { transaction: wire, fee_token: USDC });
-      const n = await need(wire, p.addr, BigInt(est.body?.result?.fee_in_token ?? 0));
+      const n = await need(wire, p.addr, BigInt(est.body?.result?.fee_in_token ?? 0), c.sol);
       if (n.why) { console.warn('[kora] refused', n.why); return rpcErr(id, n.why); }
       if (method === 'estimateTransactionFee') {
-        // strom's price for this tx: what the payer really spends, in usdc
-        return json({ jsonrpc: '2.0', id, result: { ...(est.body?.result ?? {}), fee_in_token: Number(n.fee) } });
+        // strom's price for this tx: what the payer really spends, in usdc or in lamports
+        return json({ jsonrpc: '2.0', id, result: { ...(est.body?.result ?? {}), fee_in_token: Number(token === SOL ? n.lamports : n.fee) } });
       }
-      if (c.fee! * 10n < n.fee! * 9n) return rpcErr(id, 'relayer fee missing or too low');
+      const paid = c.fee! * 10n >= n.fee! * 9n || c.sol! * 10n >= n.lamports! * 9n;
+      if (!paid) return rpcErr(id, 'relayer fee missing or too low');
     }
     const r = await upstream(method, method === 'getPayerSigner' ? {} : { transaction: params.transaction, ...(params.fee_token ? { fee_token: params.fee_token } : {}) });
     return json({ ...r.body, id }, r.status);

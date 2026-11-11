@@ -1,4 +1,5 @@
-// kora relayer: pays the solana fee, takes its fee in usdc from the user inside the same tx (ported from p3c).
+// kora relayer: pays the solana fee, takes its fee from the user inside the same tx (ported from p3c).
+// usdc in: the fee is usdc. sol in: the fee is sol, a plain system transfer, so a sol-only wallet needs nothing else.
 import { address, AccountRole, type Instruction } from '@solana/kit';
 import { PROGRAMS } from './config';
 
@@ -34,6 +35,21 @@ export function feeTransferIx(from: string, to: string, owner: string, amount: b
       { address: address(from), role: AccountRole.WRITABLE },
       { address: address(to), role: AccountRole.WRITABLE },
       { address: address(owner), role: AccountRole.READONLY_SIGNER },
+    ],
+    data,
+  };
+}
+
+// system Transfer (ix 2): user's sol -> kora's payer, in lamports
+export function solFeeIx(from: string, to: string, lamports: bigint): Instruction {
+  const data = new Uint8Array(12);
+  data[0] = 2;
+  new DataView(data.buffer).setBigUint64(4, lamports, true);
+  return {
+    programAddress: address(PROGRAMS.system),
+    accounts: [
+      { address: address(from), role: AccountRole.WRITABLE_SIGNER },
+      { address: address(to), role: AccountRole.WRITABLE },
     ],
     data,
   };
