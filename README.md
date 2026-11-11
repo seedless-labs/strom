@@ -171,4 +171,4 @@ npm run dev
 
 built by [seedless](https://seedlesslabs.xyz), the team behind the seedless money app on solana. github: [seedless-labs](https://github.com/seedless-labs).
 
-© Seedless Labs, Inc. all rights reserved.
+mit license, © Seedless Labs, Inc. see [LICENSE](LICENSE).

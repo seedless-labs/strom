@@ -13,7 +13,7 @@
     "type": "git",
     "url": "git+https://github.com/seedless-labs/strom.git"
   },
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "bugs": {
     "url": "https://github.com/seedless-labs/strom/issues"
