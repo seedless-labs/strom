@@ -79,14 +79,17 @@ below the bridge fee, strom says "amount too small" before you sign. above your 
 
 ## the relayer is guarded
 
-the relayer pays real sol, so `api/kora.ts` only forwards a transaction that looks exactly like strom's own:
+the relayer pays real sol, so `api/kora.ts` only signs a transaction that looks exactly like strom's own:
 
 - only three methods: `getPayerSigner`, `estimateTransactionFee`, `signAndSendTransaction`
 - every top-level program is on an allow list (compute budget, token, token-2022, ata, system, memo, jupiter v6, omni), and the omni bridge must be in it
 - the fee payer is used for fees and nothing else: no instruction may move its funds, except to receive the wsol rent back or the sol fee
 - every send must carry a fee to the payer that covers what the transaction really costs it, found by simulation
-- per-ip limit (20/min), a vercel firewall rate rule on top, a body cap, a 20s upstream timeout, a daily ceiling
-- the relayer key lives in server env only, never in the browser bundle
+- strom runs its own fee payer, used by nothing else. it holds a small balance, so the most it could ever lose is small
+- it signs last, only after every check above passes and your wallet has signed
+- spend caps: at most 0.005 sol of real cost per swap, a floor it never goes below, a daily ceiling
+- per-ip limit (20/min), a vercel firewall rate rule on top, a body cap
+- the payer key lives in server env only, never in the browser bundle
 
 the solana rpc goes through `api/rpc.ts`, also rate limited, so the rpc key stays server-side too.
 
@@ -148,8 +151,8 @@ npm run dev
 | `VITE_SOLANA_RPC` | browser | rpc for reads (defaults to the `/api/rpc` proxy) |
 | `VITE_KORA_URL` | browser | relayer url, unset = `/api/kora` |
 | `VITE_NEAR_RECIPIENT` | browser | default near recipient, `intents.near` |
-| `KORA_API_KEY` | server | hosted kora key. never `VITE_` |
-| `KORA_UPSTREAM` | server | hosted kora url |
+| `STROM_PAYER_KEY` | server | strom's own fee payer keypair (64-byte json array). never `VITE_` |
+| `KORA_DAILY_LAMPORTS` | server | daily spend cap per instance, optional (default 0.1 sol) |
 | `SOLANA_RPC` | server | rpc the proxies use |
 | `AI_GATEWAY_API_KEY` | server | local dev only; on vercel the deployment oidc token is used |
 | `STROM_GATEWAY_MODEL` | server | model id, optional |
@@ -165,7 +168,7 @@ npm run dev
 
 ## built with
 
-[jupiter](https://jup.ag) · [omni bridge](https://github.com/Near-One/omni-bridge) · [near intents](https://docs.near-intents.org) + 1click · [kora](https://github.com/solana-foundation/kora) via lazorkit · [@solana/kit](https://github.com/anza-xyz/kit) · wallet standard · vercel ai gateway · react + vite
+[jupiter](https://jup.ag) · [omni bridge](https://github.com/Near-One/omni-bridge) · [near intents](https://docs.near-intents.org) + 1click · a [kora](https://github.com/solana-foundation/kora)-style relayer · [@solana/kit](https://github.com/anza-xyz/kit) · wallet standard · vercel ai gateway · react + vite
 
 ## who
 
