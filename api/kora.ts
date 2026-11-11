@@ -2,7 +2,8 @@
 // the app calls /api/kora; this forwards to the hosted kora with the key, after checks.
 // kora pays real sol, so a request must look like strom's own transaction or it is refused:
 // - only getPayerSigner, estimateTransactionFee and signAndSendTransaction
-// - the payer is the fee payer and nothing else: no top-level system or token instruction may touch it
+// - the payer is the fee payer and nothing else: no top-level system or token instruction may touch it,
+//   except as the destination of a CloseAccount (the wsol rent coming back)
 // - every top-level program is one strom uses, and the omni bridge is in it
 // - signAndSend must carry a usdc fee to the payer's usdc account that covers what the tx really costs the payer
 //   (simulated: network fee plus any rent it funds), never under 0.01 usdc
@@ -129,9 +130,12 @@ function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
     if (!prog || !ALLOWED.has(prog)) return { why: `program not allowed: ${prog ?? '?'}` };
     if (prog === OMNI) omni = true;
     const accts = ix.accountIndices ?? [];
-    if ((prog === SYSTEM || prog === TOKEN || prog === TOKEN22) && accts.includes(0)) return { why: 'instruction spends the relayer' };
-    // spl Transfer (3): [src, dst, owner] · amount u64 le at 1
     const d = ix.data;
+    // the one way the payer may appear: as the destination of an spl CloseAccount (9: [account, destination, owner]),
+    // which returns the rent of the temporary wsol account it funded
+    const rentBack = prog === TOKEN && d?.[0] === 9 && accts[1] === 0 && accts[0] !== 0 && accts[2] !== 0;
+    if ((prog === SYSTEM || prog === TOKEN || prog === TOKEN22) && accts.includes(0) && !rentBack) return { why: 'instruction spends the relayer' };
+    // spl Transfer (3): [src, dst, owner] · amount u64 le at 1
     if (prog === TOKEN && d && d[0] === 3 && d.length >= 9 && keys[accts[1]] === payerUsdc) {
       fee += new DataView(d.buffer, d.byteOffset + 1, 8).getBigUint64(0, true);
     }

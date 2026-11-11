@@ -7,7 +7,7 @@ import {
   getBase64EncodedWireTransaction, setTransactionMessageConfig, fetchAddressesForLookupTables,
   compressTransactionMessageUsingAddressLookupTables, type Instruction, type Address,
 } from '@solana/kit';
-import { MINTS, PROGRAMS, STROM_ALT, JUP_MAX_ACCOUNTS, CU_LIMIT, SLIPPAGE_BPS, type Cfg } from './config';
+import { MINTS, DECIMALS, PROGRAMS, STROM_ALT, JUP_MAX_ACCOUNTS, CU_LIMIT, SLIPPAGE_BPS, type Cfg } from './config';
 import { quote, swapInstructions, routeLabel, type Quote } from './jupiter';
 import { initTransferIx, ata, transferFee } from './omni';
 import { payerSigner, estimateFee, feeTransferIx } from './kora';
@@ -89,6 +89,8 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
   for (const max of ROUTE_SIZES) {
     const q = await quote(r.inputMint, MINTS.near, r.amount, r.slippageBps ?? SLIPPAGE_BPS, max);
     const bridged = BigInt(q.otherAmountThreshold);
+    // the omni relayer takes its fee out of the bridged near. below that, init_transfer fails on chain (InvalidFee)
+    if (bridged <= relayFee) throw new Error(`amount too small: the bridge fee is ${(Number(relayFee) / 10 ** DECIMALS.near).toFixed(4)} near. try a bigger amount`);
     const [{ ixs: jup, alts }, { value: bh }] = await Promise.all([swapInstructions(q, r.user, signer), rpc.getLatestBlockhash().send()]);
     const omni = await initTransferIx({ user: r.user, mint: MINTS.near, amount: bridged, recipient: r.recipient, fee: relayFee,
       payer: signer, message: omniMessage(r) });
