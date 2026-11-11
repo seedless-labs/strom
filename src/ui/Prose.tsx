@@ -54,3 +54,8 @@ export function Go({ href, children }: { href: string; children: ReactNode }) {
 export function Cta({ href, ghost, children }: { href: string; ghost?: boolean; children: ReactNode }) {
   return <a className={'btn small' + (ghost ? ' ghost' : '')} href={href}>{children}</a>;
 }
+
+/** questions and answers, one per row */
+export function Qa({ items }: { items: [string, ReactNode][] }) {
+  return <dl className="qa">{items.map(([q, a]) => <div key={q}><dt>{q}</dt><dd>{a}</dd></div>)}</dl>;
+}
