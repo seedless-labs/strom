@@ -29,11 +29,14 @@ const TOKEN22 = 'TokenzQdBNbLqP5VEhdkAS6EHFLwvy1AdPwqm5nLD6x5';
 const ATA = 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL';
 const SYSTEM = '11111111111111111111111111111111';
 const OMNI = 'dahPEoZGXfyV58JqqH85okdHmpN8U2q8owgPUXSCPxe';
+const JUPITER = 'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4'; // v6
 const ALLOWED = new Set([
-  'ComputeBudget111111111111111111111111111111', TOKEN, TOKEN22, ATA, SYSTEM, OMNI,
-  'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4', // jupiter v6
+  'ComputeBudget111111111111111111111111111111', TOKEN, TOKEN22, ATA, SYSTEM, OMNI, JUPITER,
   'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
 ]);
+// omni init_transfer, the only omni instruction strom sends: sha256("global:init_transfer")[0..8]
+const INIT_TRANSFER = [174, 50, 134, 99, 122, 243, 243, 224];
+const OMNI_SENDER = 5, OMNI_RENT_PAYER = 11; // idl account slots: the user, and who pays the wormhole message rent
 const BASE_FEE = 10_000n; // 0.01 usdc, strom's floor
 const RPC = process.env.SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com';
 const SOL = 'So11111111111111111111111111111111111111112';
@@ -94,15 +97,23 @@ async function solPrice(): Promise<number> {
 // the usdc fee must cover it with a 20% margin, and never less than strom's floor.
 // solIn: lamports the tx itself pays the payer as its fee, added back so the fee is not netted against its own cost.
 // returns the fee in micro-usdc (fee) and the same floor/cost in lamports (lamports)
-async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n): Promise<{ why?: string; fee?: bigint; lamports?: bigint; spent?: bigint; bal?: bigint }> {
-  const [bal, sim] = await Promise.all([
+// it also reads the payer's usdc account before and after: a tx that would lower it is refused, whatever its instructions say.
+async function need(wire: string, payerAddr: string, payerUsdc: string, quoted: bigint, solIn = 0n): Promise<{ why?: string; fee?: bigint; lamports?: bigint; spent?: bigint; bal?: bigint }> {
+  const [bal, tok, sim] = await Promise.all([
     call('getBalance', [payerAddr, { commitment: 'processed' }]),
+    call('getTokenAccountBalance', [payerUsdc, { commitment: 'processed' }]),
     call('simulateTransaction', [wire, { encoding: 'base64', sigVerify: false, replaceRecentBlockhash: true, commitment: 'processed',
-      accounts: { encoding: 'base64', addresses: [payerAddr] } }]),
+      accounts: { encoding: 'base64', addresses: [payerAddr, payerUsdc] } }]),
   ]);
   const v = sim?.result?.value;
   const after = v?.accounts?.[0]?.lamports;
   if (v?.err || typeof after !== 'number' || typeof bal?.result?.value !== 'number') return { why: 'this swap would fail on solana. check your wallet has enough for the amount and the fee' };
+  // spl token account: amount is a u64 le at byte 64. a missing account holds nothing, so nothing can leave it
+  const had = BigInt(tok?.result?.value?.amount ?? '0');
+  const data = v.accounts[1]?.data?.[0];
+  const raw = typeof data === 'string' ? getBase64Encoder().encode(data) : undefined;
+  const has = raw && raw.length >= 72 ? new DataView(raw.buffer, raw.byteOffset + 64, 8).getBigUint64(0, true) : 0n;
+  if (has < had) return { why: 'instruction spends the relayer' };
   const net = BigInt(bal.result.value) - BigInt(after) + solIn;
   const spent = net > 0n ? net : 0n;
   const usd = await solPrice();
@@ -117,7 +128,7 @@ async function need(wire: string, payerAddr: string, quoted: bigint, solIn = 0n)
 }
 
 type Check = { why?: string; fee?: bigint; sol?: bigint };
-function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
+export function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
   let msg: CompiledTransactionMessage;
   try {
     const tx = getTransactionDecoder().decode(getBase64Encoder().encode(wireB64));
@@ -130,16 +141,28 @@ function inspect(wireB64: string, payerAddr: string, payerUsdc: string): Check {
   for (const ix of msg.instructions) {
     const prog = keys[ix.programAddressIndex];
     if (!prog || !ALLOWED.has(prog)) return { why: `program not allowed: ${prog ?? '?'}` };
-    if (prog === OMNI) omni = true;
     const accts = ix.accountIndices ?? [];
     const d = ix.data;
-    // the one way the payer may appear: as the destination of an spl CloseAccount (9: [account, destination, owner]),
+    // the payer signs the whole tx, so every program in it runs with the payer's authority. an allowed program id is
+    // not enough: the payer (key 0) may sit in an account list only in the four slots below, where all it can lose is
+    // lamports, and need() counts those.
+    const only = (slot: number) => accts.indexOf(0) === slot && accts.lastIndexOf(0) === slot;
+    if (prog === OMNI) {
+      if (!d || !INIT_TRANSFER.every((b, i) => d[i] === b)) return { why: 'not a strom transaction' };
+      if (accts[OMNI_SENDER] === undefined || accts[OMNI_SENDER] === 0) return { why: 'instruction spends the relayer' };
+      omni = true;
+    }
+    // 1. rent payer of the wormhole message in omni init_transfer (never the sender)
+    const omniRent = prog === OMNI && only(OMNI_RENT_PAYER);
+    // 2. funder of a new associated token account (slot 0 of create / create idempotent)
+    const ataFunder = prog === ATA && (d?.length ?? 0) <= 1 && (d?.[0] ?? 0) <= 1 && only(0);
+    // 3. destination of an spl CloseAccount (9: [account, destination, owner]),
     // which returns the rent of the temporary wsol account it funded
-    const rentBack = prog === TOKEN && d?.[0] === 9 && accts[1] === 0 && accts[0] !== 0 && accts[2] !== 0;
-    // or as the destination of a system Transfer (2: [from, to] · u64 le lamports at 4): the sol fee, paid by the user
+    const rentBack = prog === TOKEN && d?.[0] === 9 && only(1);
+    // 4. destination of a system Transfer (2: [from, to] · u64 le lamports at 4): the sol fee, paid by the user
     const solFee = prog === SYSTEM && d?.length === 12 && d[0] === 2 && d[1] === 0 && d[2] === 0 && d[3] === 0
       && accts.length === 2 && accts[1] === 0 && accts[0] !== 0;
-    if ((prog === SYSTEM || prog === TOKEN || prog === TOKEN22) && accts.includes(0) && !rentBack && !solFee) return { why: 'instruction spends the relayer' };
+    if (accts.includes(0) && !omniRent && !ataFunder && !rentBack && !solFee) return { why: 'instruction spends the relayer' };
     if (solFee) sol += new DataView(d!.buffer, d!.byteOffset + 4, 8).getBigUint64(0, true);
     // spl Transfer (3): [src, dst, owner] · amount u64 le at 1
     if (prog === TOKEN && d && d[0] === 3 && d.length >= 9 && keys[accts[1]] === payerUsdc) {
@@ -173,7 +196,7 @@ export async function POST(req: Request): Promise<Response> {
     if (c.why) { console.warn('[kora] refused', c.why); return rpcErr(id, c.why); }
     const token = method === 'estimateTransactionFee' ? params?.fee_token : USDC;
     if (token !== USDC && token !== SOL) return rpcErr(id, 'fee token must be usdc or sol');
-    const n = await need(wire, p.addr, 0n, c.sol);
+    const n = await need(wire, p.addr, p.usdcAta, 0n, c.sol);
     if (n.why) { console.warn('[kora] refused', n.why); return rpcErr(id, n.why); }
     if (n.spent! > MAX_SPEND) return rpcErr(id, 'this swap costs the relayer too much. try a smaller amount');
     if (n.bal! - n.spent! < FLOOR) { console.error('[kora] payer low', String(n.bal)); return rpcErr(id, 'the relayer is out of gas right now. try again later', 503); }
