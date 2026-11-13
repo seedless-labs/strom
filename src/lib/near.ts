@@ -37,7 +37,23 @@ export async function quoteNearToSol(p: { solAddress: string; amount: bigint; dr
     deadline: new Date(Date.now() + 10 * 60_000).toISOString() }) });
   const j = await r.json();
   if (!r.ok || !j.quote) throw new Error(`quote: ${j.message ?? r.status}`);
+  checkQuote(j, p);
   return j.quote;
+}
+
+// the quote comes from a server, and the user signs a transfer built from it. it must be the quote that was asked for:
+// the same amount in, the same assets, paid out to this wallet, and a deposit address that is a near account.
+const NEAR_ACCOUNT = /^(?=.{2,64}$)[a-z0-9]+([._-][a-z0-9]+)*$/;
+export function checkQuote(j: { quote: Quote; quoteRequest?: Record<string, unknown> }, p: { solAddress: string; amount: bigint; dry?: boolean }) {
+  const bad = (why: string) => new Error(`quote does not match what you asked for (${why}), get a new quote`);
+  const q = j.quote;
+  if (!/^\d+$/.test(q.amountIn ?? '') || BigInt(q.amountIn) !== p.amount) throw bad('amount');
+  if (!/^\d+$/.test(q.minAmountOut ?? '') || BigInt(q.minAmountOut) <= 0n) throw bad('amount out');
+  if (!p.dry && !(q.depositAddress && NEAR_ACCOUNT.test(q.depositAddress))) throw bad('deposit address');
+  if (q.depositAddress === nearAccountOf(p.solAddress)) throw bad('deposit address');
+  const want: Record<string, string> = { originAsset: TOKENS.near, destinationAsset: TOKENS.sol, recipient: p.solAddress,
+    refundTo: nearAccountOf(p.solAddress), amount: p.amount.toString() };
+  for (const [k, v] of Object.entries(want)) if (j.quoteRequest && k in j.quoteRequest && j.quoteRequest[k] !== v) throw bad(k);
 }
 
 // the exact bytes the wallet signs (solana:signMessage). nep-413 style raw_ed25519 payload, as in p5/p6
@@ -58,7 +74,9 @@ export type SignedIntent = ReturnType<typeof signedIntent>;
 // read-only dry run on intents.near: checks signature, nonce, deadline and balance without moving anything
 export const simulate = (s: SignedIntent) => view<unknown>(INTENTS, 'simulate_intents', { signed: [s] });
 
-// the relay lands it on near and pays the gas. returns the relay's intent hash
+// the relay lands it on near and pays the gas. returns the relay's intent hash.
+// quote_hashes stays empty: a 1click deposit is a plain transfer, not a solver quote, so there is no hash to bind.
+// the binding is checkQuote plus the amount check in sendToSol: the signed bytes carry the typed amount.
 export async function publish(s: SignedIntent): Promise<string> {
   const r = await (await fetch(RELAY, { method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'publish_intent', params: [{ quote_hashes: [], signed_data: s }] }) })).json();

@@ -3,6 +3,9 @@
 // it holds no wallet, builds no transaction and signs nothing.
 import { gateway, generateText, Output, NoObjectGeneratedError, APICallError } from 'ai';
 import { z } from 'zod';
+import { clientIp, fromApp, limiter } from './_guard';
+
+const allow = limiter(Number(process.env.AGENT_PER_IP_PER_MIN ?? 12), Number(process.env.AGENT_DAILY ?? 5_000));
 
 const Intent = z.object({
   kind: z.enum(['swap', 'quote', 'track', 'unknown']),
@@ -31,6 +34,8 @@ const json = (body: unknown, status = 200) =>
 
 export async function POST(req: Request): Promise<Response> {
   if (!ready()) return json({ error: 'agent is not configured' }, 503);
+  if (!fromApp(req)) return json({ error: 'not allowed' }, 403);
+  if (!allow(clientIp(req))) return json({ error: 'busy, try again in a minute' }, 429);
   let text = '';
   try { text = String((await req.json())?.text ?? '').slice(0, 200).trim(); } catch { /* bad body */ }
   if (!text) return json({ error: 'say something' }, 400);
