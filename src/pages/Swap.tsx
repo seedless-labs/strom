@@ -80,7 +80,7 @@ export default function Swap() {
       const sig = await sendToNear(w!, acct!, plan!, setBusy);
       save({ dir, sig }); location.hash = '#/track?sig=' + sig;
     } else {
-      const deposit = await sendToSol(w!, acct!, q!, setBusy);
+      const deposit = await sendToSol(w!, acct!, q!, amt, setBusy);
       save({ dir, deposit }); location.hash = '#/track?deposit=' + deposit;
     }
   });
@@ -151,6 +151,7 @@ export default function Swap() {
         </> : <>
           <dt>gas</dt><dd>none · you sign one message</dd>
           {q?.timeEstimate && <><dt>time</dt><dd>about {q.timeEstimate}s</dd></>}
+          {q?.depositAddress && <><dt>deposit to</dt><dd title={q.depositAddress}>{q.depositAddress.slice(0, 8)}…{q.depositAddress.slice(-8)}</dd></>}
         </>}
         <dt>signatures</dt><dd>1</dd>
       </dl>

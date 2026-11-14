@@ -67,10 +67,13 @@ export function quoteToSol(solAddress: string, amount: string): Promise<Quote> {
   return quoteNearToSol({ solAddress, amount: toBase(amount, NEAR_DECIMALS) });
 }
 
-export async function sendToSol(w: Wallet, acct: WalletAccount, q: Quote, step: Step = () => {}): Promise<string> {
+/** amount is what the user typed. that is what gets signed, never a number taken from the quote */
+export async function sendToSol(w: Wallet, acct: WalletAccount, q: Quote, amount: string, step: Step = () => {}): Promise<string> {
   if (!q.depositAddress) throw new Error('quote has no deposit address, get a new quote');
-  const payload = transferPayload({ nearAccount: nearAccountOf(acct.address), to: q.depositAddress, token: TOKENS.near, amount: BigInt(q.amountIn) });
-  step('waiting for your wallet');
+  const typed = toBase(amount, NEAR_DECIMALS);
+  if (typed <= 0n || BigInt(q.amountIn) !== typed) throw new Error('the quote is for a different amount, get a new quote');
+  const payload = transferPayload({ nearAccount: nearAccountOf(acct.address), to: q.depositAddress, token: TOKENS.near, amount: typed });
+  step(`sign to send ${amount} near to ${q.depositAddress.slice(0, 6)}…${q.depositAddress.slice(-6)}`);
   const s = signedIntent(payload, await signMsg(w, acct, new TextEncoder().encode(payload)), acct.address);
   step('checking on near');
   await simulate(s);

@@ -10,6 +10,7 @@
 //   what the tx really costs the payer (simulated: network fee plus any rent it funds), never under 0.01 usdc worth
 // - every other signature must already be there; the payer signs last and the rpc verifies all of them before sending
 // plus a per-tx spend cap, a balance floor, a per-ip limit, a body cap and a daily ceiling per instance.
+import { clientIp } from './_guard';
 import {
   address, getAddressEncoder, getProgramDerivedAddress, getBase64Encoder, getTransactionDecoder,
   getCompiledTransactionMessageDecoder, type CompiledTransactionMessage, createKeyPairFromBytes,
@@ -80,7 +81,8 @@ const call = (method: string, params: unknown[]) => fetch(RPC, {
   body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), signal: AbortSignal.timeout(8000),
 }).then(r => r.json());
 
-// sol price for pricing the payer's spend. cached; a failed lookup uses a high fallback so the user is never undercharged
+// sol price for pricing the payer's spend. cached 5 minutes. a failed lookup reuses the last real price for up to an hour,
+// then the operator's KORA_SOL_USD if set. with neither there is no price and the request is refused: no fixed guess.
 let solUsd = { v: 0, t: 0 };
 async function solPrice(): Promise<number> {
   if (solUsd.v && Date.now() - solUsd.t < 5 * 60_000) return solUsd.v;
@@ -89,7 +91,9 @@ async function solPrice(): Promise<number> {
     const v = Number((await r.json())?.[SOL]?.usdPrice);
     if (v > 0) { solUsd = { v, t: Date.now() }; return v; }
   } catch { /* fallback below */ }
-  return Number(process.env.KORA_SOL_USD) > 0 ? Number(process.env.KORA_SOL_USD) : 400;
+  if (solUsd.v && Date.now() - solUsd.t < 60 * 60_000) return solUsd.v;
+  if (Number(process.env.KORA_SOL_USD) > 0) return Number(process.env.KORA_SOL_USD);
+  throw new Error('no sol price');
 }
 
 // what this tx really costs the payer: simulate it and read the payer's lamports before and after.
@@ -116,7 +120,8 @@ async function need(wire: string, payerAddr: string, payerUsdc: string, quoted: 
   if (has < had) return { why: 'instruction spends the relayer' };
   const net = BigInt(bal.result.value) - BigInt(after) + solIn;
   const spent = net > 0n ? net : 0n;
-  const usd = await solPrice();
+  let usd: number;
+  try { usd = await solPrice(); } catch { return { why: 'no fresh sol price right now. try again in a minute' }; }
   const cents = BigInt(Math.ceil(usd * 100));
   // lamports → micro-usdc: lamports * usd / 1e3, plus 20%
   const cost = (spent * cents * 12n) / (1000n * 100n * 10n) + 1n;
@@ -177,7 +182,7 @@ let spentToday = { d: '', n: 0n };
 
 export async function POST(req: Request): Promise<Response> {
   if (!process.env.STROM_PAYER_KEY) return json({ error: 'relayer is not configured' }, 503);
-  const ip = req.headers.get('x-real-ip') ?? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? 'unknown';
+  const ip = clientIp(req);
   if (!allow(ip)) return json({ error: 'busy, try again in a minute' }, 429);
 
   const raw = await req.arrayBuffer();
@@ -203,7 +208,8 @@ export async function POST(req: Request): Promise<Response> {
     // strom's price for this tx: what the payer really spends, in usdc or in lamports
     if (method === 'estimateTransactionFee') return json({ jsonrpc: '2.0', id, result: { fee_in_token: Number(token === SOL ? n.lamports : n.fee) } });
 
-    const paid = c.fee! * 10n >= n.fee! * 9n || c.sol! * 10n >= n.lamports! * 9n;
+    // the fee already carries 20% over the payer's real spend. 3% slack covers the price moving between estimate and sign
+    const paid = c.fee! * 100n >= n.fee! * 97n || c.sol! * 100n >= n.lamports! * 97n;
     if (!paid) return rpcErr(id, 'relayer fee missing or too low');
     const d = new Date().toISOString().slice(0, 10);
     if (spentToday.d !== d) spentToday = { d, n: 0n };

@@ -88,6 +88,8 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
   // relayer fee paid in the bridged token (taken from the amount), native fee 0 so the user needs no sol.
   // ⚠ token-fee-only relaying is unverified until the funded run
   const relayFee = BigInt(omniFee.transferred_token_fee ?? 0);
+  // a zero fee means the bridge api gave no real price: the relayer would have no reason to finish the transfer
+  if (relayFee <= 0n) throw new Error('the bridge gave no fee for this transfer. try again in a minute');
   const [userFee, koraFeeAta] = solFee ? ['', ''] : await Promise.all([ata(r.user, feeMint), ata(signer, feeMint)]);
   // jupiter routes vary in size: if a route does not fit, ask for a smaller one
   let tooBig = '';
@@ -109,8 +111,11 @@ export async function buildSwap(cfg: Cfg, r: SwapReq): Promise<SwapPlan> {
     const accounts = uniqueAccounts(signer, ixsFor(1n));
     const v1 = async (fee: bigint) => getBase64EncodedWireTransaction(composeV1(signer, bh, ixsFor(fee)));
     let tables: Promise<Tables> | undefined;
+    // strom's own table is a nice-to-have: if it is gone (closed or deactivated), build with jupiter's tables alone
+    const load = (l: string[]) => fetchAddressesForLookupTables(l.map(a => address(a)) as Address[], rpc);
+    const loadTables = () => (STROM_ALT ? load([...alts, STROM_ALT]).catch(() => load(alts)) : load(alts));
     const v0 = async (fee: bigint) => getBase64EncodedWireTransaction(composeV0(signer, bh, ixsFor(fee),
-      await (tables ??= fetchAddressesForLookupTables([...alts, ...(STROM_ALT ? [STROM_ALT] : [])].map(a => address(a)) as Address[], rpc)), omni));
+      await (tables ??= loadTables()), omni));
     let version: 1 | 0 = cfg.txVersion ?? 0;
     if (version === 1 && (accounts > V1_MAX_ACCOUNTS || b64len(await v1(1n)) > V1_MAX_BYTES)) version = 0;
     const build = version === 1 ? v1 : v0;
