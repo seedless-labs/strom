@@ -1,6 +1,6 @@
 // solana rpc proxy: the app's reads go through here so the rpc key stays on the server.
 // only the read methods strom uses are allowed; anything else is refused. only the app's own pages may call it.
-import { clientIp, fromApp, limiter } from './_guard';
+import { clientIp, fromApp, limiter } from './_guard.js';
 
 const RPC = process.env.SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com';
 const METHODS = new Set(['getLatestBlockhash', 'getBalance', 'getTokenAccountBalance', 'getSignatureStatuses']);

@@ -3,7 +3,7 @@
 // it holds no wallet, builds no transaction and signs nothing.
 import { gateway, generateText, Output, NoObjectGeneratedError, APICallError } from 'ai';
 import { z } from 'zod';
-import { clientIp, fromApp, limiter } from './_guard';
+import { clientIp, fromApp, limiter } from './_guard.js';
 
 const allow = limiter(Number(process.env.AGENT_PER_IP_PER_MIN ?? 12), Number(process.env.AGENT_DAILY ?? 5_000));
 

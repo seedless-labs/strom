@@ -10,7 +10,7 @@
 //   what the tx really costs the payer (simulated: network fee plus any rent it funds), never under 0.01 usdc worth
 // - every other signature must already be there; the payer signs last and the rpc verifies all of them before sending
 // plus a per-tx spend cap, a balance floor, a per-ip limit, a body cap and a daily ceiling per instance.
-import { clientIp } from './_guard';
+import { clientIp } from './_guard.js';
 import {
   address, getAddressEncoder, getProgramDerivedAddress, getBase64Encoder, getTransactionDecoder,
   getCompiledTransactionMessageDecoder, type CompiledTransactionMessage, createKeyPairFromBytes,
